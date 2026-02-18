@@ -1,95 +1,134 @@
+#pragma once
 #include "World.hpp"
 
+/**
+ * @brief Main application class that manages DirectX 12 initialization,
+ *        rendering pipeline, frame resources, and the game loop.
+ *
+ * Game inherits from D3DApp and owns all low-level GPU resources:
+ * textures, shaders, PSOs, descriptor heaps, constant buffers, and
+ * frame resources. It delegates game-logic to World and the scene graph.
+ */
 class Game : public D3DApp
 {
 public:
-	Game(HINSTANCE hInstance);
-	Game(const Game& rhs) = delete;
-	Game& operator=(const Game& rhs) = delete;
-	~Game();
+    /// @brief Constructs the Game with a Windows instance handle.
+    Game(HINSTANCE hInstance);
+    Game(const Game& rhs) = delete;
+    Game& operator=(const Game& rhs) = delete;
+    ~Game();
 
-	virtual bool Initialize()override;
-private:
-	virtual void OnResize()override;
-	virtual void Update(const GameTimer& gt)override;
-	virtual void Draw(const GameTimer& gt)override;
-
-	virtual void OnMouseDown(WPARAM btnState, int x, int y)override;
-	virtual void OnMouseUp(WPARAM btnState, int x, int y)override;
-	virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
-
-	void OnKeyboardInput(const GameTimer& gt);
-	void UpdateCamera(const GameTimer& gt);
-	void AnimateMaterials(const GameTimer& gt);
-	void UpdateObjectCBs(const GameTimer& gt);
-	void UpdateMaterialCBs(const GameTimer& gt);
-	void UpdateMainPassCB(const GameTimer& gt);
-
-	//step5
-	void LoadTextures();
-
-	void BuildRootSignature();
-
-	//step9
-	void BuildDescriptorHeaps();
-
-	void BuildShadersAndInputLayout();
-	void BuildShapeGeometry();
-	void BuildPSOs();
-	void BuildFrameResources();
-	void BuildMaterials();
-	void BuildRenderItems();
-	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
-
-	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
+    virtual bool Initialize() override;
 
 private:
+    // -------------------------------------------------------
+    // D3DApp overrides
+    // -------------------------------------------------------
+    virtual void OnResize()    override;
+    virtual void Update(const GameTimer& gt) override;
+    virtual void Draw(const GameTimer& gt)   override;
 
-	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
-	FrameResource* mCurrFrameResource = nullptr;
-	int mCurrFrameResourceIndex = 0;
+    virtual void OnMouseDown(WPARAM btnState, int x, int y) override;
+    virtual void OnMouseUp  (WPARAM btnState, int x, int y) override;
+    virtual void OnMouseMove(WPARAM btnState, int x, int y) override;
 
-	UINT mCbvSrvDescriptorSize = 0;
+    // -------------------------------------------------------
+    // Per-frame update helpers
+    // -------------------------------------------------------
+    /// @brief Processes WASD camera input and arrow-key player-aircraft input.
+    void OnKeyboardInput(const GameTimer& gt);
+    void AnimateMaterials (const GameTimer& gt);
+    void UpdateObjectCBs  (const GameTimer& gt);
+    void UpdateMaterialCBs(const GameTimer& gt);
+    void UpdateMainPassCB (const GameTimer& gt);
 
-	ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
+    // -------------------------------------------------------
+    // One-time initialization helpers
+    // -------------------------------------------------------
+    /// @brief Loads all DDS textures from disk into GPU memory.
+    void LoadTextures();
+    void BuildRootSignature();
+    void BuildDescriptorHeaps();
+    void BuildShadersAndInputLayout();
+    void BuildShapeGeometry();
+    void BuildPSOs();
+    void BuildFrameResources();
+    void BuildMaterials();
+    void BuildRenderItems();
 
-	//step11
-	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
+    /// @brief Issues draw calls for a list of render items.
+    void DrawRenderItems(ID3D12GraphicsCommandList* cmdList,
+                         const std::vector<RenderItem*>& ritems);
 
-	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
-	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
+    std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
-	//step7
-	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
+private:
+    // -------------------------------------------------------
+    // Frame resources
+    // -------------------------------------------------------
+    std::vector<std::unique_ptr<FrameResource>> mFrameResources;
+    FrameResource* mCurrFrameResource    = nullptr;
+    int            mCurrFrameResourceIndex = 0;
 
-	std::unordered_map<std::string, ComPtr<ID3DBlob>> mShaders;
+    UINT mCbvSrvDescriptorSize = 0;
 
-	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
+    // -------------------------------------------------------
+    // GPU pipeline objects
+    // -------------------------------------------------------
+    ComPtr<ID3D12RootSignature>  mRootSignature   = nullptr;
+    ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
 
-	ComPtr<ID3D12PipelineState> mOpaquePSO = nullptr;
+    std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
+    std::unordered_map<std::string, std::unique_ptr<Material>>     mMaterials;
+    std::unordered_map<std::string, std::unique_ptr<Texture>>      mTextures;
+    std::unordered_map<std::string, ComPtr<ID3DBlob>>              mShaders;
+    std::unordered_map<std::string, ComPtr<ID3D12PipelineState>>   mPSOs;
 
-	// List of all the render items.
-	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
+    std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
 
-	// Render items divided by PSO.
-	std::vector<RenderItem*> mOpaqueRitems;
+    // -------------------------------------------------------
+    // Render item lists
+    // -------------------------------------------------------
+    /// @brief All render items (owns memory).
+    std::vector<std::unique_ptr<RenderItem>> mAllRitems;
 
-	PassConstants mMainPassCB;
+    /// @brief Opaque render items (non-owning view).
+    std::vector<RenderItem*> mOpaqueRitems;
 
-	//XMFLOAT3 mEyePos = { 0.0f, 0.0f, -10.0f };
-	//XMFLOAT4X4 mView = MathHelper::Identity4x4();
-	//XMFLOAT4X4 mProj = MathHelper::Identity4x4();
+    /// @brief Sky render items (non-owning view).
+    std::vector<RenderItem*> mSkyRitems;
 
-	//float mTheta = 1.3f * XM_PI;
-	//float mPhi = 0.4f * XM_PI;
-	//float mRadius = 2.5f;
+    UINT mSkyTexHeapIndex = 0;
 
-	POINT mLastMousePos;
-	Camera mCamera;
-	World mWorld;
+    // -------------------------------------------------------
+    // Per-pass constant buffer
+    // -------------------------------------------------------
+    PassConstants mMainPassCB;
+
+    // -------------------------------------------------------
+    // Camera & input
+    // -------------------------------------------------------
+    POINT  mLastMousePos;
+    Camera mCamera;
+
+    // -------------------------------------------------------
+    // Game world
+    // -------------------------------------------------------
+    World mWorld;
 
 public:
-	std::vector<std::unique_ptr<RenderItem>>& getRenderItems() { return mAllRitems; }
-	std::unordered_map<std::string, std::unique_ptr<Material>>& getMaterials() { return mMaterials; }
-	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>>& getGeometries() { return mGeometries; }
+    // -------------------------------------------------------
+    // Accessors used by SceneNode / Aircraft during build()
+    // -------------------------------------------------------
+    /// @brief Returns the list that Aircraft::buildCurrent() pushes into.
+    std::vector<std::unique_ptr<RenderItem>>&
+        getRenderItems() { return mAllRitems; }
+
+    /// @brief Returns the material map so Aircraft can look up its material.
+    std::unordered_map<std::string, std::unique_ptr<Material>>&
+        getMaterials()   { return mMaterials; }
+
+    /// @brief Returns the geometry map so Aircraft can look up "shapeGeo".
+    std::unordered_map<std::string, std::unique_ptr<MeshGeometry>>&
+        getGeometries()  { return mGeometries; }
 };
