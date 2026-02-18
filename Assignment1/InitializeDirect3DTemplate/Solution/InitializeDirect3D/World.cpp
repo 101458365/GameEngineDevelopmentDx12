@@ -120,6 +120,19 @@ void World::buildScene()
     enemy2->setWorldRotation(0.0f, XM_PI, 0.0f);  // facing player
     mSceneGraph->attachChild(std::move(enemy2));
 
+    // ---- Floor grid ----
+    auto floor = std::make_unique<RenderItem>();
+    XMStoreFloat4x4(&floor->World, XMMatrixScaling(5.0f, 1.0f, 5.0f) * XMMatrixTranslation(0.0f, -1.0f, 0.0f));
+    XMStoreFloat4x4(&floor->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
+    floor->ObjCBIndex = (UINT)mGame->getRenderItems().size();
+    floor->Mat = mGame->getMaterials()["tile0"].get();
+    floor->Geo = mGame->getGeometries()["shapeGeo"].get();
+    floor->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    floor->IndexCount = floor->Geo->DrawArgs["grid"].IndexCount;
+    floor->StartIndexLocation = floor->Geo->DrawArgs["grid"].StartIndexLocation;
+    floor->BaseVertexLocation = floor->Geo->DrawArgs["grid"].BaseVertexLocation;
+    mGame->getRenderItems().push_back(std::move(floor));
+
     // Recursively build render items for all nodes.
     mSceneGraph->build();
 }
