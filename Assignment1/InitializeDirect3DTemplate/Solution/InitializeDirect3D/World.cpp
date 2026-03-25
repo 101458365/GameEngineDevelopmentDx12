@@ -91,25 +91,25 @@ void World::buildScene()
     auto player = std::make_unique<Aircraft>(Aircraft::Eagle, mGame);
     mPlayerAircraft = player.get();
     mPlayerAircraft->setPosition(0.0f, 0.0f, 0.0f);
-    mPlayerAircraft->setScale(1.0f, 0.1f, 1.0f);
+    mPlayerAircraft->setScale(2.0f, 0.05f, 2.0f);
     mPlayerAircraft->setMaterial("bricks0");
     mSceneGraph->attachChild(std::move(player));
 
     // ---- Enemy aircraft 1 -----------------------------------------------
     auto enemy1 = std::make_unique<Aircraft>(Aircraft::Raptor, mGame);
-    enemy1->setPosition(-5.0f, 0.0f, 10.0f);
-    enemy1->setScale(1.0f, 1.0f, 1.0f);
+    enemy1->setPosition(-5.0f, 1.0f, 10.0f);
+    enemy1->setScale(2.0f, 0.1f, 2.0f);
     enemy1->setWorldRotation(0.0f, XM_PI, 0.0f);  // facing player
     enemy1->setMaterial("mirror0");
-    mSceneGraph->attachChild(std::move(enemy1));
+    mPlayerAircraft->attachChild(std::move(enemy1));
 
     // ---- Enemy aircraft 2 -----------------------------------------------
     auto enemy2 = std::make_unique<Aircraft>(Aircraft::Raptor, mGame);
-    enemy2->setPosition(5.0f, 0.0f, 10.0f);
-    enemy2->setScale(1.0f, 1.0f, 1.0f);
+    enemy2->setPosition(5.0f, 1.0f, 10.0f);
+    enemy2->setScale(2.0f, 0.1f, 2.0f);
     enemy2->setWorldRotation(0.0f, XM_PI, 0.0f);  // facing player
     enemy2->setMaterial("mirror0");
-    mSceneGraph->attachChild(std::move(enemy2));
+    mPlayerAircraft->attachChild(std::move(enemy2));
 
     // ---- Floor grid ----
     auto floor = std::make_unique<RenderItem>();

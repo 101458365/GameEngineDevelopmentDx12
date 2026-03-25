@@ -793,7 +793,7 @@ void Game::BuildMaterials()
     // Standard scene materials.
     addMaterial("bricks0", 0, 0, 1, {1,1,1,1},          {0.1f,0.1f,0.1f},    0.3f);
     addMaterial("tile0",   1, 2, 3, {0.9f,0.9f,0.9f,1}, {0.2f,0.2f,0.2f},    0.1f);
-    addMaterial("mirror0", 2, 4, 5, {0,0,0,1},           {0.98f,0.97f,0.95f}, 0.1f);
+    addMaterial("mirror0", 2, 4, 5, {1,1,1,1},           {0.98f,0.97f,0.95f}, 1.0f);
     addMaterial("sky",     3, 6, 7, {1,1,1,1},           {0.1f,0.1f,0.1f},    1.0f);
 
     // Aircraft materials (reuse default diffuse/normal textures).

@@ -75,7 +75,7 @@ void Player::initializeActions()
 void Player::handleEvent(CommandQueue& commands, const GameTimer& gt)
 {
     // Example one-time event
-    // if (GetAsyncKeyState(VK_SPACE) & 1)
+    // if (GetAsyncKeyState(VK_SPACE) & 0x8000)
     // {
     //     Command fire;
     //     fire.category = Category::PlayerAircraft;

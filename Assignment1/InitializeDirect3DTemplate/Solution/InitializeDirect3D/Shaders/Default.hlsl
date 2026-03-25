@@ -96,6 +96,7 @@ float4 PS(VertexOut pin) : SV_Target
 
 	// Dynamically look up the texture in the array.
 	diffuseAlbedo *= gTextureMaps[diffuseMapIndex].Sample(gsamAnisotropicWrap, pin.TexC);
+    clip(diffuseAlbedo - 0.1f);
 
     // Vector from point being lit to eye. 
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
