@@ -26,6 +26,7 @@ public:
     /// @brief Returns the current velocity.
     XMFLOAT3 getVelocity() const;
 
+
     /**
      * @brief Moves this entity and updates the GPU constant buffer each frame.
      *

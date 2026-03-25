@@ -66,6 +66,9 @@
     <ClCompile Include="NormalMapApp.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Player.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Common\UploadBuffer.h">
@@ -111,6 +114,15 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="Game.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Command.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CommandQueue.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Player.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>

@@ -1,5 +1,6 @@
 #pragma once
 #include "Entity.hpp"
+#include "Command.hpp"
 #include <string>
 
 /**
@@ -10,11 +11,16 @@
  *
  * Two types are supported: Eagle (player, blue) and Raptor (enemy, red).
  * The type determines which material is applied to the mesh.
+ *
+ * Assignment 2 additions:
+ *   - getCategory() returns PlayerAircraft or EnemyAircraft based on mType,
+ *     allowing the command system to route commands to the correct aircraft.
+ *   - accelerate() adds a velocity delta, used by AircraftMover commands.
  */
 class Aircraft : public Entity
 {
 public:
-    /// @brief Aircraft type, used to select the correct material.
+    /// @brief Aircraft type, used to select the correct material and category.
     enum Type
     {
         Eagle,   ///< Player aircraft — blue material.
@@ -28,6 +34,30 @@ public:
      * @param game  Back-pointer to the Game (needed for resource access).
      */
     Aircraft(Type type, Game* game);
+
+    /**
+     * @brief Returns the category bitmask for this aircraft.
+     *
+     * Eagle  → Category::PlayerAircraft
+     * Raptor → Category::EnemyAircraft
+     *
+     * Used by SceneNode::onCommand() to route commands correctly.
+     */
+    virtual unsigned int getCategory() const override;
+
+    /**
+     * @brief Adds (vx, vy, vz) to the current velocity.
+     *
+     * Equivalent to setVelocity(getVelocity() + delta). Used by
+     * AircraftMover so multiple movement commands in one frame accumulate
+     * (e.g. diagonal movement from two held arrow keys).
+     *
+     * @param vx, vy, vz  Velocity delta in units per second.
+     */
+    void accelerate(float vx, float vy, float vz);
+
+    /// @brief Overrides the material name used during buildCurrent().
+    void setMaterial(const std::string& materialName) { mSprite = materialName; }
 
 private:
     /**

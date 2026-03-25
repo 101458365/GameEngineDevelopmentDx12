@@ -4,8 +4,11 @@
  *
  * World builds and manages the scene graph. It creates the player Eagle and
  * two enemy Raptors, then delegates update/draw to the root SceneNode each frame.
- * Player movement is handled via handlePlayerInput(), which is called from
- * Game::OnKeyboardInput() every frame.
+ *
+ * Assignment 2 changes:
+ *   - update() resets the player velocity, drains the CommandQueue into
+ *     the scene graph via onCommand(), then runs the regular update step.
+ *   - handlePlayerInput() is removed — Player handles input now.
  */
 
 #include "World.hpp"
@@ -29,10 +32,26 @@ World::World(Game* game)
 
 /**
  * @brief Updates the entire scene graph for one frame.
+ *
+ * Steps:
+ *   1. Reset player velocity to zero so the aircraft stops when no key is held.
+ *   2. Drain the CommandQueue — each command is dispatched through the scene
+ *      graph via onCommand(), which routes it to matching nodes.
+ *   3. Run the regular scene-graph update (Entity moves by velocity * dt).
+ *
  * @param gt  Game timer.
  */
 void World::update(const GameTimer& gt)
 {
+    // Reset player velocity each frame — commands will re-add it if keys are held.
+    if (mPlayerAircraft)
+        mPlayerAircraft->setVelocity(0.0f, 0.0f, 0.0f);
+
+    // Drain the command queue and dispatch each command through the scene graph.
+    while (!mCommandQueue.isEmpty())
+        mSceneGraph->onCommand(mCommandQueue.pop(), gt);
+
+    // Regular scene-graph update (applies velocities, updates CBs, etc.)
     mSceneGraph->update(gt);
 }
 
@@ -49,38 +68,6 @@ void World::draw()
 }
 
 // ---------------------------------------------------------------------------
-// Player input
-// ---------------------------------------------------------------------------
-
-/**
- * @brief Reads arrow-key state and applies velocity to the player aircraft.
- *
- * Velocity is reset to zero each frame so the aircraft stops when no key
- * is pressed. The scene-graph update propagates the velocity into position.
- *
- * Controls:
- *   UP    – move forward  (+Z)
- *   DOWN  – move backward (-Z)
- *   LEFT  – strafe left   (-X)
- *   RIGHT – strafe right  (+X)
- *
- * @param gt  Game timer (currently unused; speed is a constant).
- */
-void World::handlePlayerInput(const GameTimer& gt)
-{
-    if (mPlayerAircraft == nullptr) return;
-
-    float vx = 0.0f, vz = 0.0f;
-
-    if (GetAsyncKeyState(VK_LEFT)  & 0x8000) vx = -PlayerSpeed;
-    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) vx =  PlayerSpeed;
-    if (GetAsyncKeyState(VK_UP)    & 0x8000) vz =  PlayerSpeed;
-    if (GetAsyncKeyState(VK_DOWN)  & 0x8000) vz = -PlayerSpeed;
-
-    mPlayerAircraft->setVelocity(vx, 0.0f, vz);
-}
-
-// ---------------------------------------------------------------------------
 // Scene construction
 // ---------------------------------------------------------------------------
 
@@ -89,7 +76,8 @@ void World::handlePlayerInput(const GameTimer& gt)
  *
  * Creates:
  *   - One Eagle (player) at origin, facing forward.
- *   - Two Raptors (enemies) ahead of the player, facing back (rotated 180°).
+ *   - Two Raptors (enemies) ahead of the player, facing back (rotated 180 degrees).
+ *   - A floor grid below the aircraft.
  *
  * Calls SceneNode::build() on the root, which recursively calls
  * Aircraft::buildCurrent() to register render items with Game.
@@ -103,7 +91,8 @@ void World::buildScene()
     auto player = std::make_unique<Aircraft>(Aircraft::Eagle, mGame);
     mPlayerAircraft = player.get();
     mPlayerAircraft->setPosition(0.0f, 0.0f, 0.0f);
-    mPlayerAircraft->setScale(1.0f, 1.0f, 1.0f);
+    mPlayerAircraft->setScale(1.0f, 0.1f, 1.0f);
+    mPlayerAircraft->setMaterial("bricks0");
     mSceneGraph->attachChild(std::move(player));
 
     // ---- Enemy aircraft 1 -----------------------------------------------
@@ -111,6 +100,7 @@ void World::buildScene()
     enemy1->setPosition(-5.0f, 0.0f, 10.0f);
     enemy1->setScale(1.0f, 1.0f, 1.0f);
     enemy1->setWorldRotation(0.0f, XM_PI, 0.0f);  // facing player
+    enemy1->setMaterial("mirror0");
     mSceneGraph->attachChild(std::move(enemy1));
 
     // ---- Enemy aircraft 2 -----------------------------------------------
@@ -118,17 +108,18 @@ void World::buildScene()
     enemy2->setPosition(5.0f, 0.0f, 10.0f);
     enemy2->setScale(1.0f, 1.0f, 1.0f);
     enemy2->setWorldRotation(0.0f, XM_PI, 0.0f);  // facing player
+    enemy2->setMaterial("mirror0");
     mSceneGraph->attachChild(std::move(enemy2));
 
     // ---- Floor grid ----
     auto floor = std::make_unique<RenderItem>();
     XMStoreFloat4x4(&floor->World, XMMatrixScaling(5.0f, 1.0f, 5.0f) * XMMatrixTranslation(0.0f, -1.0f, 0.0f));
     XMStoreFloat4x4(&floor->TexTransform, XMMatrixScaling(8.0f, 8.0f, 1.0f));
-    floor->ObjCBIndex = (UINT)mGame->getRenderItems().size();
-    floor->Mat = mGame->getMaterials()["tile0"].get();
-    floor->Geo = mGame->getGeometries()["shapeGeo"].get();
-    floor->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    floor->IndexCount = floor->Geo->DrawArgs["grid"].IndexCount;
+    floor->ObjCBIndex         = (UINT)mGame->getRenderItems().size();
+    floor->Mat                = mGame->getMaterials()["tile0"].get();
+    floor->Geo                = mGame->getGeometries()["shapeGeo"].get();
+    floor->PrimitiveType      = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    floor->IndexCount         = floor->Geo->DrawArgs["grid"].IndexCount;
     floor->StartIndexLocation = floor->Geo->DrawArgs["grid"].StartIndexLocation;
     floor->BaseVertexLocation = floor->Geo->DrawArgs["grid"].BaseVertexLocation;
     mGame->getRenderItems().push_back(std::move(floor));

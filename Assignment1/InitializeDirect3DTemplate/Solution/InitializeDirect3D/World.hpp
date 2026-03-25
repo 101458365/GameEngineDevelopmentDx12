@@ -1,12 +1,19 @@
 #pragma once
 #include "SceneNode.hpp"
 #include "Aircraft.hpp"
+#include "CommandQueue.hpp"
 
 /**
  * @brief Manages the game world: the scene graph and all game objects.
  *
- * World owns the root SceneNode and holds a pointer to the player aircraft
- * so that input handling can apply velocity directly to it each frame.
+ * World owns the root SceneNode and holds a pointer to the player aircraft.
+ *
+ * Assignment 2 additions:
+ *   - Owns a CommandQueue that Player pushes commands into each frame.
+ *   - update() drains the queue and dispatches each command through the
+ *     scene graph before the regular node update step.
+ *   - getCommandQueue() exposes the queue so Game can pass it to Player.
+ *   - handlePlayerInput() is removed — Player now owns that responsibility.
  */
 class World
 {
@@ -24,14 +31,13 @@ public:
     void buildScene();
 
     /**
-     * @brief Reads arrow-key state and sets the player aircraft velocity.
+     * @brief Returns a reference to the command queue.
      *
-     * Called every frame by Game::OnKeyboardInput().
-     * Left/Right move along X, Up/Down move along Z.
+     * Called by Game::processInput() to give Player a place to push commands.
      *
-     * @param gt  Game timer providing delta time.
+     * @return Reference to the world's CommandQueue.
      */
-    void handlePlayerInput(const GameTimer& gt);
+    CommandQueue& getCommandQueue() { return mCommandQueue; }
 
 private:
     /// @brief Layer indices for organising scene-graph children.
@@ -45,6 +51,9 @@ private:
     Game*                              mGame;
     std::unique_ptr<SceneNode>         mSceneGraph;
     std::array<SceneNode*, LayerCount> mSceneLayers;
+
+    /// The command queue — Player pushes in, World pops out each frame.
+    CommandQueue                       mCommandQueue;
 
     /// @brief Non-owning pointer to the player's Eagle aircraft.
     Aircraft*                          mPlayerAircraft;

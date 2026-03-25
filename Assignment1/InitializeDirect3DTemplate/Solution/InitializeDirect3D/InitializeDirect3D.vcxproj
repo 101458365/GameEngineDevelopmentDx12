@@ -144,6 +144,7 @@
     <ClCompile Include="NormalMapApp.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="Player.cpp" />
     <ClCompile Include="SceneNode.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
     </ClCompile>
@@ -160,9 +161,12 @@
     <ClInclude Include="..\..\Common\MathHelper.h" />
     <ClInclude Include="..\..\Common\UploadBuffer.h" />
     <ClInclude Include="Aircraft.hpp" />
+    <ClInclude Include="Command.hpp" />
+    <ClInclude Include="CommandQueue.hpp" />
     <ClInclude Include="Entity.hpp" />
     <ClInclude Include="FrameResource.h" />
     <ClInclude Include="Game.hpp" />
+    <ClInclude Include="Player.hpp" />
     <ClInclude Include="SceneNode.hpp" />
     <ClInclude Include="World.hpp" />
   </ItemGroup>

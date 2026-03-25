@@ -1,5 +1,6 @@
 #pragma once
 #include "World.hpp"
+#include "Player.hpp"
 
 /**
  * @brief Main application class that manages DirectX 12 initialization,
@@ -8,6 +9,12 @@
  * Game inherits from D3DApp and owns all low-level GPU resources:
  * textures, shaders, PSOs, descriptor heaps, constant buffers, and
  * frame resources. It delegates game-logic to World and the scene graph.
+ *
+ * Assignment 2 additions:
+ *   - Owns a Player instance (mPlayer) that handles all input.
+ *   - processInput() is called each frame from Update(), replacing the
+ *     old direct GetAsyncKeyState calls for aircraft movement.
+ *   - OnKeyboardInput() now only handles camera movement (WASD).
  */
 class Game : public D3DApp
 {
@@ -35,8 +42,13 @@ private:
     // -------------------------------------------------------
     // Per-frame update helpers
     // -------------------------------------------------------
-    /// @brief Processes WASD camera input and arrow-key player-aircraft input.
+
+    /// @brief Delegates to Player::handleEvent and Player::handleRealtimeInput.
+    void processInput();
+
+    /// @brief Handles camera-only keyboard input (WASD).
     void OnKeyboardInput(const GameTimer& gt);
+
     void AnimateMaterials (const GameTimer& gt);
     void UpdateObjectCBs  (const GameTimer& gt);
     void UpdateMaterialCBs(const GameTimer& gt);
@@ -67,7 +79,7 @@ private:
     // Frame resources
     // -------------------------------------------------------
     std::vector<std::unique_ptr<FrameResource>> mFrameResources;
-    FrameResource* mCurrFrameResource    = nullptr;
+    FrameResource* mCurrFrameResource      = nullptr;
     int            mCurrFrameResourceIndex = 0;
 
     UINT mCbvSrvDescriptorSize = 0;
@@ -75,7 +87,7 @@ private:
     // -------------------------------------------------------
     // GPU pipeline objects
     // -------------------------------------------------------
-    ComPtr<ID3D12RootSignature>  mRootSignature   = nullptr;
+    ComPtr<ID3D12RootSignature>  mRootSignature    = nullptr;
     ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
 
     std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
@@ -111,10 +123,16 @@ private:
     POINT  mLastMousePos;
     Camera mCamera;
 
+    /// Stored timer pointer so processInput() can pass it to Player.
+    const GameTimer* mCurrentGt = nullptr;
+
     // -------------------------------------------------------
-    // Game world
+    // Game world & player
     // -------------------------------------------------------
-    World mWorld;
+    World  mWorld;
+
+    /// @brief Handles all player input and key-binding management.
+    Player mPlayer;
 
 public:
     // -------------------------------------------------------

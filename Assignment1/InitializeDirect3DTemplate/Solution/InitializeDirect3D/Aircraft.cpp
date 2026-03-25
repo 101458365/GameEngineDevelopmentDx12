@@ -6,6 +6,29 @@
 #include "Aircraft.hpp"
 #include "Game.hpp"
 
+// ---------------------------------------------------------------------------
+// AircraftMover operator() — defined here so Aircraft is fully visible
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Calls accelerate() on the target aircraft.
+ *
+ * The static_cast is safe because the command's category ensures only
+ * Aircraft nodes receive this command.
+ *
+ * @param node  The scene node — must be an Aircraft.
+ * @param gt    Game timer (unused).
+ */
+void AircraftMover::operator()(SceneNode& node, const GameTimer& gt) const
+{
+    Aircraft& aircraft = static_cast<Aircraft&>(node);
+    aircraft.accelerate(velocity.x, velocity.y, velocity.z);
+}
+
+// ---------------------------------------------------------------------------
+// Construction
+// ---------------------------------------------------------------------------
+
 /**
  * @brief Constructs an Aircraft, setting the material name from its type.
  *
@@ -25,6 +48,44 @@ Aircraft::Aircraft(Type type, Game* game)
     case Raptor: mSprite = "Raptor"; break;
     default:     mSprite = "Eagle";  break;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Command system
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Returns the category bitmask for this aircraft.
+ *
+ * Eagle  → Category::PlayerAircraft
+ * Raptor → Category::EnemyAircraft
+ *
+ * This allows the World's command dispatcher to route movement commands
+ * only to the player's aircraft and not to enemies (or vice versa).
+ */
+unsigned int Aircraft::getCategory() const
+{
+    switch (mType)
+    {
+    case Eagle:  return Category::PlayerAircraft;
+    default:     return Category::EnemyAircraft;
+    }
+}
+
+/**
+ * @brief Adds a velocity delta to the aircraft's current velocity.
+ *
+ * Used by AircraftMover commands. Accumulates across multiple commands
+ * in a single frame (e.g. diagonal movement from two arrow keys held together).
+ *
+ * @param vx, vy, vz  Velocity delta in units per second.
+ */
+void Aircraft::accelerate(float vx, float vy, float vz)
+{
+    setVelocity(
+        mVelocity.x + vx,
+        mVelocity.y + vy,
+        mVelocity.z + vz);
 }
 
 // ---------------------------------------------------------------------------

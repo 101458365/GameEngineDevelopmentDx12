@@ -5,6 +5,7 @@
 #include "../../Common/GeometryGenerator.h"
 #include "../../Common/Camera.h"
 #include "FrameResource.h"
+#include "Command.hpp"
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -61,6 +62,11 @@ class Game;
  *
  * Subclasses override updateCurrent(), drawCurrent(), and buildCurrent()
  * to implement per-node behaviour.
+ *
+ * Assignment 2 additions:
+ *   - getCategory() returns the node's Category bitmask (default: Category::Scene).
+ *   - onCommand() checks the command's category against this node's category
+ *     and executes the action if they match, then forwards to all children.
  */
 class SceneNode
 {
@@ -91,6 +97,32 @@ public:
 
     /// @brief Builds GPU resources for this node and all children.
     void build();
+
+    // -------------------------------------------------------
+    // Command system
+    // -------------------------------------------------------
+
+    /**
+     * @brief Dispatches a command to this node and all children.
+     *
+     * If this node's category overlaps the command's category bitmask,
+     * the command's action is executed on this node. The command is then
+     * forwarded to all children regardless of whether it matched here.
+     *
+     * @param command  The command to dispatch.
+     * @param gt       Game timer passed to the action function.
+     */
+    void onCommand(const Command& command, const GameTimer& gt);
+
+    /**
+     * @brief Returns this node's category bitmask.
+     *
+     * Override in derived classes to return a specific category.
+     * Default returns Category::Scene.
+     *
+     * @return Category bitmask (one or more Category::Type values OR'd together).
+     */
+    virtual unsigned int getCategory() const;
 
     // -------------------------------------------------------
     // Transform accessors

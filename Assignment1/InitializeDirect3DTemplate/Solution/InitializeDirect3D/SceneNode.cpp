@@ -50,7 +50,7 @@ SceneNode::Ptr SceneNode::detachChild(const SceneNode& node)
         [&](Ptr& p) { return p.get() == &node; });
     assert(found != mChildren.end());
 
-    Ptr result = std::move(*found);
+    Ptr result      = std::move(*found);
     result->mParent = nullptr;
     mChildren.erase(found);
     return result;
@@ -136,6 +136,40 @@ void SceneNode::buildChildren()
 }
 
 // ---------------------------------------------------------------------------
+// Command system
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Returns Category::Scene by default.
+ *
+ * Derived classes (e.g. Aircraft) override this to return their specific
+ * category so commands are routed to the correct nodes.
+ */
+unsigned int SceneNode::getCategory() const
+{
+    return Category::Scene;
+}
+
+/**
+ * @brief Executes the command if this node matches, then forwards to children.
+ *
+ * The bitwise AND checks whether any bit in the command's category overlaps
+ * with this node's category. If so, the action is called on this node.
+ * The command is always forwarded to children regardless of match.
+ *
+ * @param command  The command to dispatch.
+ * @param gt       Game timer passed through to the action.
+ */
+void SceneNode::onCommand(const Command& command, const GameTimer& gt)
+{
+    if (command.category & getCategory())
+        command.action(*this, gt);
+
+    for (Ptr& child : mChildren)
+        child->onCommand(command, gt);
+}
+
+// ---------------------------------------------------------------------------
 // Transform accessors
 // ---------------------------------------------------------------------------
 
@@ -190,7 +224,7 @@ void SceneNode::setScale(float x, float y, float z)
  * Each node's local transform is composed left-to-right from the root down,
  * so a child's world matrix = parent_world * child_local.
  *
- * @return The world-space 4×4 matrix for this node.
+ * @return The world-space 4x4 matrix for this node.
  */
 XMFLOAT4X4 SceneNode::getWorldTransform() const
 {
@@ -210,7 +244,7 @@ XMFLOAT4X4 SceneNode::getWorldTransform() const
 
 /**
  * @brief Computes only this node's local transform (S * Rx * Ry * Rz * T).
- * @return The local 4×4 matrix.
+ * @return The local 4x4 matrix.
  */
 XMFLOAT4X4 SceneNode::getTransform() const
 {
