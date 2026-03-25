@@ -80,6 +80,18 @@ bool Game::Initialize()
     mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
     FlushCommandQueue();
 
+    // ---------------------------------------------------------------------------
+    // Optional key remapping
+    // ---------------------------------------------------------------------------
+     
+    // Remap aircraft controls to IJKL 
+    /*mPlayer.assignKey(Player::MoveForward, 'I');
+    mPlayer.assignKey(Player::MoveBackward, 'K');
+    mPlayer.assignKey(Player::MoveLeft, 'J');
+    mPlayer.assignKey(Player::MoveRight, 'L');
+    mPlayer.assignKey(Player::MoveUp, 'U');
+    mPlayer.assignKey(Player::MoveDown, 'O');*/
+
     return true;
 }
 

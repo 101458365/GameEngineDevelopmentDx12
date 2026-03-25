@@ -23,6 +23,8 @@ Player::Player()
     mKeyBinding[VK_RIGHT] = MoveRight;
     mKeyBinding[VK_UP]    = MoveForward;
     mKeyBinding[VK_DOWN]  = MoveBackward;
+    mKeyBinding['Q'] = MoveUp;
+    mKeyBinding['E'] = MoveDown;
 
     // WASD as alternates
     /*mKeyBinding['A'] = MoveLeft;
@@ -53,6 +55,8 @@ void Player::initializeActions()
     mActionBinding[MoveRight].action    = derivedAction<Aircraft>(AircraftMover( PlayerSpeed, 0.f, 0.f));
     mActionBinding[MoveForward].action  = derivedAction<Aircraft>(AircraftMover(0.f, 0.f,  PlayerSpeed));
     mActionBinding[MoveBackward].action = derivedAction<Aircraft>(AircraftMover(0.f, 0.f, -PlayerSpeed));
+    mActionBinding[MoveUp].action = derivedAction<Aircraft>(AircraftMover(0.f, PlayerSpeed, 0.f));
+    mActionBinding[MoveDown].action = derivedAction<Aircraft>(AircraftMover(0.f, -PlayerSpeed, 0.f));
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ void Player::initializeActions()
  */
 void Player::handleEvent(CommandQueue& commands, const GameTimer& gt)
 {
-    // Example one-time event stub (extend as needed):
+    // Example one-time event
     // if (GetAsyncKeyState(VK_SPACE) & 1)
     // {
     //     Command fire;
@@ -161,6 +165,8 @@ bool Player::isRealtimeAction(Action action)
     case MoveRight:
     case MoveForward:
     case MoveBackward:
+    case MoveUp:
+    case MoveDown:
         return true;
     default:
         return false;

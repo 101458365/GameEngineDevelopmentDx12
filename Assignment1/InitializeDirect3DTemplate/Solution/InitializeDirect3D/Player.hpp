@@ -34,6 +34,8 @@ public:
         MoveRight,    ///< Move the player aircraft right (+X).
         MoveForward,  ///< Move the player aircraft forward (+Z).
         MoveBackward, ///< Move the player aircraft backward (-Z).
+        MoveUp,       ///< Move the player aircraft upwards (+Y)
+        MoveDown,     ///< Move the player aircraft downwards (-Y)
         ActionCount   ///< Total number of actions — keep last.
     };
 
@@ -109,5 +111,5 @@ private:
     std::map<Action, Command> mActionBinding;
 
     /// Player aircraft movement speed in units per second.
-    static constexpr float    PlayerSpeed = 30.0f;
+    static constexpr float    PlayerSpeed = 10.0f;
 };
