@@ -82,14 +82,14 @@ bool Game::Initialize()
     BuildRootSignature();
     BuildDescriptorHeaps();
     BuildShadersAndInputLayout();
-    BuildMaterials();
     BuildShapeGeometry();
-    BuildRenderItems();       // sky sphere only (index 0)
+    RegisterStates();
+    mStateStack.pushState(States::Title);
+    BuildMaterials();
+    //BuildRenderItems();       // sky sphere only (index 0)
     BuildPSOs();
     BuildFrameResources();    // sized for sky item only; GameState will call
     // RebuildFrameResources() after buildScene() adds more
-    RegisterStates();
-    mStateStack.pushState(States::Title);;
 
     ThrowIfFailed(mCommandList->Close());
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
@@ -179,6 +179,7 @@ void Game::Update(const GameTimer& gt)
  */
 void Game::Draw(const GameTimer& gt)
 {
+    //mStateStack.draw();
     auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
     ThrowIfFailed(cmdListAlloc->Reset());
     ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
@@ -198,8 +199,9 @@ void Game::Draw(const GameTimer& gt)
     if (!mOpaqueRitems.empty())
     {
         // GameState or PauseState is active — sky blue.
-        clearColor[0] = 0.53f; clearColor[1] = 0.81f;
-        clearColor[2] = 0.98f; clearColor[3] = 1.0f;
+        /*clearColor[0] = 0.53f; clearColor[1] = 0.81f;
+        clearColor[2] = 0.98f; clearColor[3] = 1.0f;*/
+
     }
     else if (mStateStack.isEmpty())
     {
@@ -223,6 +225,9 @@ void Game::Draw(const GameTimer& gt)
     auto bbv = CurrentBackBufferView();
     auto dsv = DepthStencilView();
     mCommandList->OMSetRenderTargets(1, &bbv, true, &dsv);
+
+    BuildOpaqueRenderItems();
+    OutputDebugStringA(("Opaque count: " + std::to_string(mOpaqueRitems.size()) + "\n").c_str());
 
     // Only bind GPU resources and draw geometry when there are render items.
     if (!mOpaqueRitems.empty())
@@ -280,6 +285,20 @@ void Game::Draw(const GameTimer& gt)
     // This runs after Present so DX12 and GDI don't conflict.
     if (mOpaqueRitems.empty())
         DrawOverlayText();
+}
+
+void Game::BuildOpaqueRenderItems()
+{
+    mOpaqueRitems.clear();
+
+    for (auto& e : mAllRitems) // or getRenderItems()
+    {
+        // Skip sky
+        if (e->Mat != mMaterials["sky"].get())
+        {
+            mOpaqueRitems.push_back(e.get());
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -844,7 +863,7 @@ void Game::BuildFrameResources()
         mFrameResources.push_back(std::make_unique<FrameResource>(
             md3dDevice.Get(),
             1,
-            (UINT)mAllRitems.size(),
+            (UINT)mAllRitems.size()+100,
             (UINT)mMaterials.size()));
     }
 }

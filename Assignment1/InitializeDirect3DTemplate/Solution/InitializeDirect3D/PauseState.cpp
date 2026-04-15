@@ -16,7 +16,7 @@ PauseState::PauseState(StateStack& stack, Context context)
     : State(stack, context)
 {
     SetWindowTextA(context.game->MainWnd(),
-        "Aircraft Shooter  |  GAME PAUSED  |  ESC: Resume   BACKSPACE: Main Menu");
+        "Aircraft Shooter  |  GAME PAUSED  |  R: Resume   Q: Main Menu");
 }
 
 // ---------------------------------------------------------------------------
@@ -63,12 +63,13 @@ bool PauseState::update(const GameTimer& gt)
  */
 bool PauseState::handleEvent(WPARAM key)
 {
-    if (key == VK_ESCAPE)
+    if (key == 'R')
     {
         // Resume — pop PauseState, GameState resumes updating.
         requestStackPop();
+        requestStackPush(States::Game);
     }
-    else if (key == VK_BACK)
+    else if (key == 'Q')
     {
         // Return to main menu — discard game progress.
         requestStateClear();

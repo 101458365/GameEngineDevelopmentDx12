@@ -37,6 +37,7 @@ public:
 
     virtual bool Initialize() override;
     void BuildFrameResources();
+    void BuildOpaqueRenderItems();
 
     /// @brief Flushes GPU, clears and rebuilds frame resources at the new item count.
     /// Called by GameState after buildScene() to correctly size per-object CBs.

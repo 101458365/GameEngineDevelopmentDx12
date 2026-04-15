@@ -5,10 +5,10 @@
 
 #include "StateStack.hpp"
 
-/**
- * @brief Constructs the StateStack with a shared Context.
- * @param context  Application context passed to every new State.
- */
+ /**
+  * @brief Constructs the StateStack with a shared Context.
+  * @param context  Application context passed to every new State.
+  */
 StateStack::StateStack(Context context)
     : mStack()
     , mPendingList()

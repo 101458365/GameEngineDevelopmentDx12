@@ -73,7 +73,7 @@ bool MenuState::handleEvent(WPARAM key)
         if (mSelectedOption == Play)
         {
             // Clear the menu and start the game.
-            requestStateClear();
+            requestStackPop();
             requestStackPush(States::Game);
         }
         else if (mSelectedOption == Exit)

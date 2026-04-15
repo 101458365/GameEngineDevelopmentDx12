@@ -6,11 +6,11 @@
 #include "State.hpp"
 #include "StateStack.hpp"
 
-/**
- * @brief Constructs a State with its owning stack and shared context.
- * @param stack    The StateStack this state lives on.
- * @param context  Shared application context.
- */
+ /**
+  * @brief Constructs a State with its owning stack and shared context.
+  * @param stack    The StateStack this state lives on.
+  * @param context  Shared application context.
+  */
 State::State(StateStack& stack, Context context)
     : mStack(stack)
     , mContext(context)

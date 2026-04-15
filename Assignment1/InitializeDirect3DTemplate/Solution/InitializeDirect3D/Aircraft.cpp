@@ -121,7 +121,7 @@ void Aircraft::buildCurrent()
     renderer = render.get();
 
     // Initial world transform from current node position.
-    renderer->World = getTransform();
+    renderer->World = getWorldTransform();
 
     // Assign the next available CB index.
     renderer->ObjCBIndex = (UINT)game->getRenderItems().size();

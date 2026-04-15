@@ -1,5 +1,4 @@
 #pragma once
-#include <memory> 
 #include "../../Common/d3dApp.h"
 #include "../../Common/GameTimer.h"
 
@@ -22,7 +21,8 @@ struct Context
      */
     Context(Game* game)
         : game(game)
-    {}
+    {
+    }
 
     /// Pointer to the owning Game — provides access to GPU resources.
     Game* game;

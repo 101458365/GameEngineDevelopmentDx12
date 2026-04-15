@@ -1,8 +1,8 @@
 #pragma once
+#include "State.hpp"
 #include <vector>
 #include <functional>
 #include <map>
-#include "State.hpp"
 
 /**
  * @brief State identifiers used to register and request states.
@@ -71,9 +71,9 @@ public:
     void registerState(States::ID stateID)
     {
         mFactories[stateID] = [this]()
-        {
-            return State::Ptr(new T(*this, mContext));
-        };
+            {
+                return State::Ptr(new T(*this, mContext));
+            };
     }
 
     // -------------------------------------------------------
@@ -125,7 +125,8 @@ private:
         Action     action;
         States::ID stateID;
         PendingChange(Action a, States::ID id = States::None)
-            : action(a), stateID(id) {}
+            : action(a), stateID(id) {
+        }
     };
     std::vector<PendingChange> mPendingList;
 

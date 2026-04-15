@@ -7,11 +7,11 @@
 #include "StateStack.hpp"
 #include "Game.hpp"
 
-/**
- * @brief Constructs TitleState and sets the window title.
- * @param stack    The owning StateStack.
- * @param context  Shared application context.
- */
+ /**
+  * @brief Constructs TitleState and sets the window title.
+  * @param stack    The owning StateStack.
+  * @param context  Shared application context.
+  */
 TitleState::TitleState(StateStack& stack, Context context)
     : State(stack, context)
 {

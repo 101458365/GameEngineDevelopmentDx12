@@ -29,28 +29,23 @@ GameState::GameState(StateStack& stack, Context context)
     // has pushed additional render items, rebuild them at the correct size.
     context.game->RebuildFrameResources();
 
-    // Populate the opaque list so Draw() renders 3D geometry.
-    for (auto& e : context.game->getRenderItems())
-        if (e->Mat != context.game->getMaterials()["sky"].get())
-            context.game->getOpaqueRitems().push_back(e.get());
-
     SetWindowTextA(context.game->MainWnd(),
-        "Aircraft Shooter  |  WASD: Camera   Arrows: Move   Q/E: Up/Down   ESC: Pause");
+        "Aircraft Shooter  |  WASD: Camera   Arrows: Move   Q/E: Up/Down   P: Pause");
 }
 
 GameState::~GameState()
 {
     // Clear the opaque list so Draw() stops rendering 3D geometry
     // when we return to the Title or Menu screens.
-    getContext().game->getOpaqueRitems().clear();
+    //getContext().game->getOpaqueRitems().clear();
 
     // Remove the scene render items (aircraft + floor) that buildScene() added,
     // keeping only the sky sphere (index 0) so re-entering GameState doesn't
     // accumulate duplicate items.
     auto& allItems = getContext().game->getRenderItems();
     auto& skyItems = getContext().game->getSkyRitems();
-    if (allItems.size() > 1)
-        allItems.erase(allItems.begin() + 1, allItems.end());
+   /* if (allItems.size() > 1)
+        allItems.erase(allItems.begin() + 1, allItems.end());*/
 
     // Re-point skyItems[0] in case the vector was reallocated.
     skyItems.clear();
@@ -106,7 +101,7 @@ bool GameState::update(const GameTimer& gt)
  */
 bool GameState::handleEvent(WPARAM key)
 {
-    if (key == VK_ESCAPE)
+    if (key == 'P')
     {
         requestStackPush(States::Pause);
         return false;

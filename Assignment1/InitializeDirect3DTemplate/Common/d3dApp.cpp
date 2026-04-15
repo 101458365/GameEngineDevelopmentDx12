@@ -606,30 +606,30 @@ void D3DApp::CalculateFrameStats()
 	// average time it takes to render one frame.  These stats 
 	// are appended to the window caption bar.
     
-	static int frameCnt = 0;
-	static float timeElapsed = 0.0f;
+	//static int frameCnt = 0;
+	//static float timeElapsed = 0.0f;
 
-	frameCnt++;
+	//frameCnt++;
 
-	// Compute averages over one second period.
-	if( (mTimer.TotalTime() - timeElapsed) >= 1.0f )
-	{
-		float fps = (float)frameCnt; // fps = frameCnt / 1
-		float mspf = 1000.0f / fps;
+	//// Compute averages over one second period.
+	//if( (mTimer.TotalTime() - timeElapsed) >= 1.0f )
+	//{
+	//	float fps = (float)frameCnt; // fps = frameCnt / 1
+	//	float mspf = 1000.0f / fps;
 
-        wstring fpsStr = to_wstring(fps);
-        wstring mspfStr = to_wstring(mspf);
+ //       wstring fpsStr = to_wstring(fps);
+ //       wstring mspfStr = to_wstring(mspf);
 
-        wstring windowText = mMainWndCaption +
-            L"    fps: " + fpsStr +
-            L"   mspf: " + mspfStr;
+ //       wstring windowText = mMainWndCaption +
+ //           L"    fps: " + fpsStr +
+ //           L"   mspf: " + mspfStr;
 
-        SetWindowText(mhMainWnd, windowText.c_str());
-		
-		// Reset for next average.
-		frameCnt = 0;
-		timeElapsed += 1.0f;
-	}
+ //       SetWindowText(mhMainWnd, windowText.c_str());
+	//	
+	//	// Reset for next average.
+	//	frameCnt = 0;
+	//	timeElapsed += 1.0f;
+	//}
 }
 
 //! Display adapters implement graphical functionality. Usually, the display adapter
