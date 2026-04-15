@@ -3,18 +3,27 @@
  * @brief Implementation of the Game class.
  *
  * Game is the top-level DirectX 12 application. It owns all GPU resources
- * (textures, shaders, PSOs, frame resources, constant buffers) and delegates
- * game logic to the World / scene-graph hierarchy.
+ * (textures, shaders, PSOs, frame resources, constant buffers).
+ *
+ * Game Engine Project changes:
+ *   - Owns a StateStack instead of World and Player directly.
+ *   - Registers TitleState, MenuState, GameState, PauseState on startup.
+ *   - TitleState is pushed first — flow is Title → Menu → Game ↔ Pause.
+ *   - Update() delegates to StateStack::update().
+ *   - Draw() calls StateStack::draw() then issues GPU draw calls.
+ *   - OnKeyboardInput() handles camera (WASD).
+ *   - Key-down events from D3DApp::MsgProc are forwarded to
+ *     StateStack::handleEvent() for state transitions.
+ *   - App exits when StateStack becomes empty.
  *
  * Keyboard controls:
- *   W / S / A / D  – fly the camera forward/back/left/right
- *   Arrow keys      – move the player aircraft (Eagle) in the XZ plane
- *
- * Assignment 2 changes:
- *   - processInput() replaces the old World::handlePlayerInput() call.
- *     It gets the CommandQueue from World and passes it to Player, which
- *     pushes movement commands based on current key state.
- *   - OnKeyboardInput() now only moves the camera (WASD).
+ *   W / S / A / D  – fly the camera (all states)
+ *   Arrow keys      – move the player aircraft (GameState only)
+ *   Q / E           – move aircraft up / down (GameState only)
+ *   ESC             – pause game / resume
+ *   BACKSPACE       – return to main menu from pause
+ *   UP / DOWN       – navigate menu options
+ *   ENTER           – confirm menu selection
  */
 
 #include "Game.hpp"
@@ -26,12 +35,12 @@ const int gNumFrameResources = 3;
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Constructs the Game, initialising the World with a back-pointer.
+ * @brief Constructs the Game, initialising the StateStack with a Context.
  * @param hInstance  Windows application instance handle.
  */
 Game::Game(HINSTANCE hInstance)
     : D3DApp(hInstance)
-    , mWorld(this)
+    , mStateStack(Context(this))
 {
 }
 
@@ -46,17 +55,21 @@ Game::~Game()
 // ---------------------------------------------------------------------------
 
 /**
- * @brief Initialises DirectX 12 resources and the game world.
+ * @brief Initialises DirectX 12 resources and pushes the TitleState.
  *
  * Called once at startup. Sets up the camera, loads textures, builds the
- * pipeline state, geometry, materials, render items, and frame resources.
+ * pipeline state, geometry, and materials. Registers all states with the
+ * StateStack and pushes TitleState as the initial state.
+ *
+ * Note: BuildRenderItems() is intentionally left empty here — GameState
+ * calls World::buildScene() when it is constructed, which pushes render
+ * items into Game::mAllRitems at that point.
  */
 bool Game::Initialize()
 {
     if (!D3DApp::Initialize())
         return false;
 
-    // Position camera above the scene, looking down at a slight angle.
     mCamera.SetPosition(0.0f, 10.0f, -20.0f);
     mCamera.Pitch(XMConvertToRadians(20.0f));
 
@@ -69,30 +82,40 @@ bool Game::Initialize()
     BuildRootSignature();
     BuildDescriptorHeaps();
     BuildShadersAndInputLayout();
-    BuildShapeGeometry();
     BuildMaterials();
-    BuildRenderItems();   // calls mWorld.buildScene() internally
-    BuildFrameResources();
+    BuildShapeGeometry();
+    BuildRenderItems();       // sky sphere only (index 0)
     BuildPSOs();
+    BuildFrameResources();    // sized for sky item only; GameState will call
+    // RebuildFrameResources() after buildScene() adds more
+    RegisterStates();
+    mStateStack.pushState(States::Title);;
 
     ThrowIfFailed(mCommandList->Close());
     ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
     mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
     FlushCommandQueue();
 
-    // ---------------------------------------------------------------------------
-    // Optional key remapping
-    // ---------------------------------------------------------------------------
-     
-    // Remap aircraft controls to IJKL 
-    /*mPlayer.assignKey(Player::MoveForward, 'I');
-    mPlayer.assignKey(Player::MoveBackward, 'K');
-    mPlayer.assignKey(Player::MoveLeft, 'J');
-    mPlayer.assignKey(Player::MoveRight, 'L');
-    mPlayer.assignKey(Player::MoveUp, 'U');
-    mPlayer.assignKey(Player::MoveDown, 'O');*/
-
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// State registration
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Registers all state classes with the StateStack factory.
+ *
+ * Each state is associated with a States::ID. When the stack needs to
+ * create a state it calls the registered lambda, which news the concrete
+ * type without the stack needing to know about it.
+ */
+void Game::RegisterStates()
+{
+    mStateStack.registerState<TitleState>(States::Title);
+    mStateStack.registerState<MenuState>(States::Menu);
+    mStateStack.registerState<GameState>(States::Game);
+    mStateStack.registerState<PauseState>(States::Pause);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,17 +130,23 @@ void Game::OnResize()
 }
 
 /**
- * @brief Per-frame update: input, world, and GPU constant-buffer uploads.
+ * @brief Per-frame update: camera input, state stack, and GPU uploads.
+ *
+ * If the StateStack becomes empty (Exit was selected from the menu),
+ * PostQuitMessage is called to close the application.
+ *
  * @param gt  Game timer providing delta time and total time.
  */
 void Game::Update(const GameTimer& gt)
 {
-    mCurrentGt = &gt;
+    OnKeyboardInput(gt);
 
-    OnKeyboardInput(gt);  // camera only
-    processInput();        // player aircraft via command system
+    // Update all active states via the stack.
+    mStateStack.update(gt);
 
-    mWorld.update(gt);
+    // Exit the application if the stack is empty (user chose Exit).
+    if (mStateStack.isEmpty())
+        PostQuitMessage(0);
 
     // Advance circular frame-resource index.
     mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
@@ -141,6 +170,11 @@ void Game::Update(const GameTimer& gt)
 
 /**
  * @brief Records and submits the draw command list for one frame.
+ *
+ * Clears the screen with a colour appropriate to the current state,
+ * then calls StateStack::draw() to let active states submit geometry,
+ * then issues the GPU draw calls for all registered render items.
+ *
  * @param gt  Game timer (unused directly here).
  */
 void Game::Draw(const GameTimer& gt)
@@ -152,16 +186,35 @@ void Game::Draw(const GameTimer& gt)
     mCommandList->RSSetViewports(1, &mScreenViewport);
     mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-    // Transition back buffer: present → render target.
     auto t1 = CD3DX12_RESOURCE_BARRIER::Transition(
         CurrentBackBuffer(),
         D3D12_RESOURCE_STATE_PRESENT,
         D3D12_RESOURCE_STATE_RENDER_TARGET);
     mCommandList->ResourceBarrier(1, &t1);
 
-    // Clear.
+    // Clear colour changes per state for visual distinction.
+    // Title = dark navy, Menu = dark teal, Game/Pause = sky blue.
+    FLOAT clearColor[4];
+    if (!mOpaqueRitems.empty())
+    {
+        // GameState or PauseState is active — sky blue.
+        clearColor[0] = 0.53f; clearColor[1] = 0.81f;
+        clearColor[2] = 0.98f; clearColor[3] = 1.0f;
+    }
+    else if (mStateStack.isEmpty())
+    {
+        clearColor[0] = 0.0f; clearColor[1] = 0.0f;
+        clearColor[2] = 0.0f; clearColor[3] = 1.0f;
+    }
+    else
+    {
+        // Title or Menu — dark navy.
+        clearColor[0] = 0.05f; clearColor[1] = 0.05f;
+        clearColor[2] = 0.15f; clearColor[3] = 1.0f;
+    }
+
     mCommandList->ClearRenderTargetView(
-        CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+        CurrentBackBufferView(), clearColor, 0, nullptr);
     mCommandList->ClearDepthStencilView(
         DepthStencilView(),
         D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
@@ -171,37 +224,41 @@ void Game::Draw(const GameTimer& gt)
     auto dsv = DepthStencilView();
     mCommandList->OMSetRenderTargets(1, &bbv, true, &dsv);
 
-    // Bind descriptor heap and root signature.
-    ID3D12DescriptorHeap* heaps[] = { mSrvDescriptorHeap.Get() };
-    mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
-    mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+    // Only bind GPU resources and draw geometry when there are render items.
+    if (!mOpaqueRitems.empty())
+    {
+        ID3D12DescriptorHeap* heaps[] = { mSrvDescriptorHeap.Get() };
+        mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+        mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 
-    // Pass constants (slot 1).
-    auto passCB = mCurrFrameResource->PassCB->Resource();
-    mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
+        auto passCB = mCurrFrameResource->PassCB->Resource();
+        mCommandList->SetGraphicsRootConstantBufferView(1, passCB->GetGPUVirtualAddress());
 
-    // Structured material buffer (slot 2).
-    auto matBuffer = mCurrFrameResource->MaterialBuffer->Resource();
-    mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
+        auto matBuffer = mCurrFrameResource->MaterialBuffer->Resource();
+        mCommandList->SetGraphicsRootShaderResourceView(2, matBuffer->GetGPUVirtualAddress());
 
-    // Sky cube-map texture (slot 3).
-    CD3DX12_GPU_DESCRIPTOR_HANDLE skyTex(
-        mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
-    skyTex.Offset(mSkyTexHeapIndex, mCbvSrvDescriptorSize);
-    mCommandList->SetGraphicsRootDescriptorTable(3, skyTex);
+        CD3DX12_GPU_DESCRIPTOR_HANDLE skyTex(
+            mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+        skyTex.Offset(mSkyTexHeapIndex, mCbvSrvDescriptorSize);
+        mCommandList->SetGraphicsRootDescriptorTable(3, skyTex);
 
-    // All 2-D textures starting at heap slot 0 (slot 4).
-    mCommandList->SetGraphicsRootDescriptorTable(
-        4, mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
+        mCommandList->SetGraphicsRootDescriptorTable(
+            4, mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
-    // Draw opaque objects.
-    DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+        // Let states draw (GameState delegates to World::draw()).
+        mStateStack.draw();
 
-    // Switch to sky PSO and draw sky.
-    mCommandList->SetPipelineState(mPSOs["sky"].Get());
-    DrawRenderItems(mCommandList.Get(), mSkyRitems);
+        DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
-    // Transition back buffer: render target → present.
+        mCommandList->SetPipelineState(mPSOs["sky"].Get());
+        DrawRenderItems(mCommandList.Get(), mSkyRitems);
+    }
+    else
+    {
+        // No render items yet (Title / Menu) — just let states draw.
+        mStateStack.draw();
+    }
+
     auto t2 = CD3DX12_RESOURCE_BARRIER::Transition(
         CurrentBackBuffer(),
         D3D12_RESOURCE_STATE_RENDER_TARGET,
@@ -218,6 +275,101 @@ void Game::Draw(const GameTimer& gt)
 
     mCurrFrameResource->Fence = ++mCurrentFence;
     mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+
+    // Draw GDI text overlay for non-game states (Title / Menu / Pause).
+    // This runs after Present so DX12 and GDI don't conflict.
+    if (mOpaqueRitems.empty())
+        DrawOverlayText();
+}
+
+// ---------------------------------------------------------------------------
+// GDI text overlay (Title / Menu / Pause)
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Draws state-specific text onto the window using GDI.
+ *
+ * Called after Present() on frames where the opaque render list is empty
+ * (i.e. Title and Menu states). GDI renders directly onto the HWND after
+ * the swap chain has presented, so there is no conflict with DX12.
+ *
+ * This gives visible on-screen feedback without needing a sprite renderer
+ * or ImGui integration.
+ */
+void Game::DrawOverlayText()
+{
+    HDC hdc = GetDC(mhMainWnd);
+    if (!hdc) return;
+
+    RECT rc;
+    GetClientRect(mhMainWnd, &rc);
+
+    // Transparent text background so the DX12 clear colour shows through.
+    SetBkMode(hdc, TRANSPARENT);
+
+    // Title state — one big centred prompt.
+    // Menu state  — show both options, highlight the selected one.
+    // We distinguish by checking the window title string.
+    char title[512] = {};
+    GetWindowTextA(mhMainWnd, title, sizeof(title));
+
+    const bool isTitle = (strstr(title, "Press Any Key") != nullptr);
+    const bool isMenu = (strstr(title, "Main Menu") != nullptr);
+
+    HFONT hFontLarge = CreateFontA(
+        72, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Arial");
+    HFONT hFontSmall = CreateFontA(
+        36, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Arial");
+
+    HFONT hOldFont = (HFONT)SelectObject(hdc, hFontLarge);
+
+    if (isTitle)
+    {
+        SetTextColor(hdc, RGB(220, 220, 255));
+        RECT r = rc;
+        r.top = rc.bottom / 3;
+        DrawTextA(hdc, "AIRCRAFT SHOOTER", -1, &r, DT_CENTER | DT_SINGLELINE);
+
+        SelectObject(hdc, hFontSmall);
+        SetTextColor(hdc, RGB(180, 180, 220));
+        r.top = rc.bottom / 2;
+        DrawTextA(hdc, "Press any key to start", -1, &r, DT_CENTER | DT_SINGLELINE);
+    }
+    else if (isMenu)
+    {
+        SetTextColor(hdc, RGB(220, 220, 255));
+        RECT r = rc;
+        r.top = rc.bottom / 4;
+        DrawTextA(hdc, "MAIN MENU", -1, &r, DT_CENTER | DT_SINGLELINE);
+
+        SelectObject(hdc, hFontSmall);
+
+        const bool playSelected = (strstr(title, "[> Play <]") != nullptr);
+
+        // Play option
+        SetTextColor(hdc, playSelected ? RGB(255, 255, 100) : RGB(160, 160, 200));
+        r.top = rc.bottom / 2 - 30;
+        DrawTextA(hdc, playSelected ? "> Play <" : "Play", -1, &r, DT_CENTER | DT_SINGLELINE);
+
+        // Exit option
+        SetTextColor(hdc, !playSelected ? RGB(255, 255, 100) : RGB(160, 160, 200));
+        r.top = rc.bottom / 2 + 30;
+        DrawTextA(hdc, !playSelected ? "> Exit <" : "Exit", -1, &r, DT_CENTER | DT_SINGLELINE);
+
+        SetTextColor(hdc, RGB(120, 120, 160));
+        SelectObject(hdc, hFontSmall);
+        r.top = rc.bottom * 3 / 4;
+        DrawTextA(hdc, "UP / DOWN to navigate   ENTER to select", -1, &r, DT_CENTER | DT_SINGLELINE);
+    }
+
+    SelectObject(hdc, hOldFont);
+    DeleteObject(hFontLarge);
+    DeleteObject(hFontSmall);
+    ReleaseDC(mhMainWnd, hdc);
 }
 
 // ---------------------------------------------------------------------------
@@ -256,39 +408,36 @@ void Game::OnMouseMove(WPARAM btnState, int x, int y)
     mLastMousePos.y = y;
 }
 
-// ---------------------------------------------------------------------------
-// Input
-// ---------------------------------------------------------------------------
-
-/**
- * @brief Feeds the command queue from Player each frame.
- *
- * Gets the CommandQueue from World and passes it to Player, which checks
- * key state and pushes movement commands. World drains the queue in update().
- */
-void Game::processInput()
+LRESULT Game::MsgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-    CommandQueue& commands = mWorld.getCommandQueue();
-    mPlayer.handleEvent(commands, *mCurrentGt);
-    mPlayer.handleRealtimeInput(commands, *mCurrentGt);
+    if (msg == WM_KEYDOWN)
+        mStateStack.handleEvent(wParam);
+    return D3DApp::MsgProc(hwnd, msg, wParam, lParam);
 }
 
+// ---------------------------------------------------------------------------
+// Keyboard input
+// ---------------------------------------------------------------------------
+
 /**
- * @brief Handles camera-only keyboard input (WASD).
+ * @brief Handles camera-only keyboard input (WASD) every frame.
  *
- * Aircraft movement is handled via the command system in processInput().
+ * State-specific input (aircraft movement, menu navigation, pause) is
+ * handled via StateStack::handleEvent() which is called from MsgProc
+ * on WM_KEYDOWN, not here. This keeps camera movement smooth (polled
+ * every frame) while state transitions are event-driven (once per press).
  *
  * @param gt  Game timer (used for delta-time scaling).
  */
 void Game::OnKeyboardInput(const GameTimer& gt)
 {
-    const float dt    = gt.DeltaTime();
+    const float dt = gt.DeltaTime();
     const float speed = 10.0f;
 
-    if (GetAsyncKeyState('W') & 0x8000) mCamera.Walk( speed * dt);
+    if (GetAsyncKeyState('W') & 0x8000) mCamera.Walk(speed * dt);
     if (GetAsyncKeyState('S') & 0x8000) mCamera.Walk(-speed * dt);
     if (GetAsyncKeyState('A') & 0x8000) mCamera.Strafe(-speed * dt);
-    if (GetAsyncKeyState('D') & 0x8000) mCamera.Strafe( speed * dt);
+    if (GetAsyncKeyState('D') & 0x8000) mCamera.Strafe(speed * dt);
     mCamera.UpdateViewMatrix();
 }
 
@@ -299,7 +448,7 @@ void Game::OnKeyboardInput(const GameTimer& gt)
 /** @brief Placeholder for animated material logic (currently unused). */
 void Game::AnimateMaterials(const GameTimer& gt)
 {
-    // Extend here to animate material properties over time (e.g. scrolling UVs).
+    // Extend here to animate material properties over time.
 }
 
 /**
@@ -313,11 +462,11 @@ void Game::UpdateObjectCBs(const GameTimer& gt)
     {
         if (e->NumFramesDirty > 0)
         {
-            XMMATRIX world        = XMLoadFloat4x4(&e->World);
+            XMMATRIX world = XMLoadFloat4x4(&e->World);
             XMMATRIX texTransform = XMLoadFloat4x4(&e->TexTransform);
 
             ObjectConstants objConst;
-            XMStoreFloat4x4(&objConst.World,        XMMatrixTranspose(world));
+            XMStoreFloat4x4(&objConst.World, XMMatrixTranspose(world));
             XMStoreFloat4x4(&objConst.TexTransform, XMMatrixTranspose(texTransform));
             objConst.MaterialIndex = e->Mat->MatCBIndex;
 
@@ -342,12 +491,12 @@ void Game::UpdateMaterialCBs(const GameTimer& gt)
             XMMATRIX matTransform = XMLoadFloat4x4(&mat->MatTransform);
 
             MaterialData matData;
-            matData.DiffuseAlbedo   = mat->DiffuseAlbedo;
-            matData.FresnelR0       = mat->FresnelR0;
-            matData.Roughness       = mat->Roughness;
+            matData.DiffuseAlbedo = mat->DiffuseAlbedo;
+            matData.FresnelR0 = mat->FresnelR0;
+            matData.Roughness = mat->Roughness;
             XMStoreFloat4x4(&matData.MatTransform, XMMatrixTranspose(matTransform));
             matData.DiffuseMapIndex = mat->DiffuseSrvHeapIndex;
-            matData.NormalMapIndex  = mat->NormalSrvHeapIndex;
+            matData.NormalMapIndex = mat->NormalSrvHeapIndex;
 
             currMaterialBuffer->CopyData(mat->MatCBIndex, matData);
             mat->NumFramesDirty--;
@@ -361,41 +510,41 @@ void Game::UpdateMaterialCBs(const GameTimer& gt)
  */
 void Game::UpdateMainPassCB(const GameTimer& gt)
 {
-    XMMATRIX view     = mCamera.GetView();
-    XMMATRIX proj     = mCamera.GetProj();
+    XMMATRIX view = mCamera.GetView();
+    XMMATRIX proj = mCamera.GetProj();
     XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 
-    auto detView     = XMMatrixDeterminant(view);
-    auto detProj     = XMMatrixDeterminant(proj);
+    auto detView = XMMatrixDeterminant(view);
+    auto detProj = XMMatrixDeterminant(proj);
     auto detViewProj = XMMatrixDeterminant(viewProj);
 
-    XMMATRIX invView     = XMMatrixInverse(&detView,     view);
-    XMMATRIX invProj     = XMMatrixInverse(&detProj,     proj);
+    XMMATRIX invView = XMMatrixInverse(&detView, view);
+    XMMATRIX invProj = XMMatrixInverse(&detProj, proj);
     XMMATRIX invViewProj = XMMatrixInverse(&detViewProj, viewProj);
 
-    XMStoreFloat4x4(&mMainPassCB.View,        XMMatrixTranspose(view));
-    XMStoreFloat4x4(&mMainPassCB.InvView,     XMMatrixTranspose(invView));
-    XMStoreFloat4x4(&mMainPassCB.Proj,        XMMatrixTranspose(proj));
-    XMStoreFloat4x4(&mMainPassCB.InvProj,     XMMatrixTranspose(invProj));
-    XMStoreFloat4x4(&mMainPassCB.ViewProj,    XMMatrixTranspose(viewProj));
+    XMStoreFloat4x4(&mMainPassCB.View, XMMatrixTranspose(view));
+    XMStoreFloat4x4(&mMainPassCB.InvView, XMMatrixTranspose(invView));
+    XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
+    XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
+    XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
     XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
 
-    mMainPassCB.EyePosW             = mCamera.GetPosition3f();
-    mMainPassCB.RenderTargetSize    = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
+    mMainPassCB.EyePosW = mCamera.GetPosition3f();
+    mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
     mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
-    mMainPassCB.NearZ               = 1.0f;
-    mMainPassCB.FarZ                = 1000.0f;
-    mMainPassCB.TotalTime           = gt.TotalTime();
-    mMainPassCB.DeltaTime           = gt.DeltaTime();
-    mMainPassCB.AmbientLight        = { 0.25f, 0.25f, 0.35f, 1.0f };
+    mMainPassCB.NearZ = 1.0f;
+    mMainPassCB.FarZ = 1000.0f;
+    mMainPassCB.TotalTime = gt.TotalTime();
+    mMainPassCB.DeltaTime = gt.DeltaTime();
+    mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 
     // Three directional lights.
-    mMainPassCB.Lights[0].Direction = {  0.57735f, -0.57735f,  0.57735f };
-    mMainPassCB.Lights[0].Strength  = {  0.8f,      0.8f,      0.8f };
+    mMainPassCB.Lights[0].Direction = { 0.57735f, -0.57735f,  0.57735f };
+    mMainPassCB.Lights[0].Strength = { 0.8f,      0.8f,      0.8f };
     mMainPassCB.Lights[1].Direction = { -0.57735f, -0.57735f,  0.57735f };
-    mMainPassCB.Lights[1].Strength  = {  0.4f,      0.4f,      0.4f };
-    mMainPassCB.Lights[2].Direction = {  0.0f,     -0.707f,   -0.707f };
-    mMainPassCB.Lights[2].Strength  = {  0.2f,      0.2f,      0.2f };
+    mMainPassCB.Lights[1].Strength = { 0.4f,      0.4f,      0.4f };
+    mMainPassCB.Lights[2].Direction = { 0.0f,     -0.707f,   -0.707f };
+    mMainPassCB.Lights[2].Strength = { 0.2f,      0.2f,      0.2f };
 
     mCurrFrameResource->PassCB->CopyData(0, mMainPassCB);
 }
@@ -435,8 +584,8 @@ void Game::LoadTextures()
 
     for (int i = 0; i < (int)texNames.size(); ++i)
     {
-        auto tex      = std::make_unique<Texture>();
-        tex->Name     = texNames[i];
+        auto tex = std::make_unique<Texture>();
+        tex->Name = texNames[i];
         tex->Filename = texFilenames[i];
         ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(
             md3dDevice.Get(), mCommandList.Get(),
@@ -457,10 +606,9 @@ void Game::LoadTextures()
 void Game::BuildRootSignature()
 {
     CD3DX12_DESCRIPTOR_RANGE texTable0;
-    texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);   // sky cube
-
+    texTable0.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0);
     CD3DX12_DESCRIPTOR_RANGE texTable1;
-    texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 10, 1, 0);  // 2D textures
+    texTable1.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 10, 1, 0);
 
     CD3DX12_ROOT_PARAMETER slotRootParameter[5];
     slotRootParameter[0].InitAsConstantBufferView(0);
@@ -470,24 +618,19 @@ void Game::BuildRootSignature()
     slotRootParameter[4].InitAsDescriptorTable(1, &texTable1, D3D12_SHADER_VISIBILITY_PIXEL);
 
     auto staticSamplers = GetStaticSamplers();
-
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(
-        5, slotRootParameter,
+    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(5, slotRootParameter,
         (UINT)staticSamplers.size(), staticSamplers.data(),
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
     ComPtr<ID3DBlob> serializedRootSig = nullptr;
-    ComPtr<ID3DBlob> errorBlob         = nullptr;
-    HRESULT hr = D3D12SerializeRootSignature(
-        &rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+    ComPtr<ID3DBlob> errorBlob = nullptr;
+    HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
         serializedRootSig.GetAddressOf(), errorBlob.GetAddressOf());
-
     if (errorBlob != nullptr)
         ::OutputDebugStringA((char*)errorBlob->GetBufferPointer());
     ThrowIfFailed(hr);
 
-    ThrowIfFailed(md3dDevice->CreateRootSignature(
-        0,
+    ThrowIfFailed(md3dDevice->CreateRootSignature(0,
         serializedRootSig->GetBufferPointer(),
         serializedRootSig->GetBufferSize(),
         IID_PPV_ARGS(mRootSignature.GetAddressOf())));
@@ -506,7 +649,7 @@ void Game::BuildDescriptorHeaps()
 {
     D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
     srvHeapDesc.NumDescriptors = 10;
-    srvHeapDesc.Type  = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc,
         IID_PPV_ARGS(&mSrvDescriptorHeap)));
@@ -514,41 +657,39 @@ void Game::BuildDescriptorHeaps()
     CD3DX12_CPU_DESCRIPTOR_HANDLE hDescriptor(
         mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart());
 
-    // 2D textures.
     std::vector<ComPtr<ID3D12Resource>> tex2DList =
     {
-        mTextures["bricksDiffuseMap"] ->Resource,
-        mTextures["bricksNormalMap"]  ->Resource,
-        mTextures["tileDiffuseMap"]   ->Resource,
-        mTextures["tileNormalMap"]    ->Resource,
+        mTextures["bricksDiffuseMap"]->Resource,
+        mTextures["bricksNormalMap"]->Resource,
+        mTextures["tileDiffuseMap"]->Resource,
+        mTextures["tileNormalMap"]->Resource,
         mTextures["defaultDiffuseMap"]->Resource,
-        mTextures["defaultNormalMap"] ->Resource
+        mTextures["defaultNormalMap"]->Resource
     };
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-    srvDesc.Shader4ComponentMapping       = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.ViewDimension                 = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MostDetailedMip     = 0;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MostDetailedMip = 0;
     srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
 
     for (UINT i = 0; i < (UINT)tex2DList.size(); ++i)
     {
-        srvDesc.Format              = tex2DList[i]->GetDesc().Format;
+        srvDesc.Format = tex2DList[i]->GetDesc().Format;
         srvDesc.Texture2D.MipLevels = tex2DList[i]->GetDesc().MipLevels;
         md3dDevice->CreateShaderResourceView(tex2DList[i].Get(), &srvDesc, hDescriptor);
         hDescriptor.Offset(1, mCbvSrvDescriptorSize);
     }
 
-    // Sky cube-map.
     auto skyCubeMap = mTextures["skyCubeMap"]->Resource;
-    srvDesc.ViewDimension                   = D3D12_SRV_DIMENSION_TEXTURECUBE;
-    srvDesc.TextureCube.MostDetailedMip     = 0;
-    srvDesc.TextureCube.MipLevels           = skyCubeMap->GetDesc().MipLevels;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+    srvDesc.TextureCube.MostDetailedMip = 0;
+    srvDesc.TextureCube.MipLevels = skyCubeMap->GetDesc().MipLevels;
     srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
     srvDesc.Format = skyCubeMap->GetDesc().Format;
     md3dDevice->CreateShaderResourceView(skyCubeMap.Get(), &srvDesc, hDescriptor);
 
-    mSkyTexHeapIndex = (UINT)tex2DList.size();  // = 6
+    mSkyTexHeapIndex = (UINT)tex2DList.size();
 }
 
 /**
@@ -560,9 +701,9 @@ void Game::BuildDescriptorHeaps()
 void Game::BuildShadersAndInputLayout()
 {
     mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
-    mShaders["opaquePS"]   = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
-    mShaders["skyVS"]      = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl",     nullptr, "VS", "vs_5_1");
-    mShaders["skyPS"]      = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl",     nullptr, "PS", "ps_5_1");
+    mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
+    mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
+    mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
 
     mInputLayout =
     {
@@ -576,98 +717,66 @@ void Game::BuildShadersAndInputLayout()
 /**
  * @brief Generates and uploads shared geometry (box, grid, sphere, cylinder)
  *        into a single vertex/index buffer named "shapeGeo".
- *
- * Aircraft nodes reference "shapeGeo" → "box" for their mesh.
- * The sky sphere uses "shapeGeo" → "sphere".
  */
 void Game::BuildShapeGeometry()
 {
     GeometryGenerator geoGen;
-    auto box      = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
-    auto grid     = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
-    auto sphere   = geoGen.CreateSphere(0.5f, 20, 20);
+    auto box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
+    auto grid = geoGen.CreateGrid(20.0f, 30.0f, 60, 40);
+    auto sphere = geoGen.CreateSphere(0.5f, 20, 20);
     auto cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
-    // Vertex offsets in the concatenated buffer.
-    UINT boxVertexOffset      = 0;
-    UINT gridVertexOffset     = (UINT)box.Vertices.size();
-    UINT sphereVertexOffset   = gridVertexOffset   + (UINT)grid.Vertices.size();
+    UINT boxVertexOffset = 0;
+    UINT gridVertexOffset = (UINT)box.Vertices.size();
+    UINT sphereVertexOffset = gridVertexOffset + (UINT)grid.Vertices.size();
     UINT cylinderVertexOffset = sphereVertexOffset + (UINT)sphere.Vertices.size();
 
-    // Index offsets.
-    UINT boxIndexOffset      = 0;
-    UINT gridIndexOffset     = (UINT)box.Indices32.size();
-    UINT sphereIndexOffset   = gridIndexOffset   + (UINT)grid.Indices32.size();
+    UINT boxIndexOffset = 0;
+    UINT gridIndexOffset = (UINT)box.Indices32.size();
+    UINT sphereIndexOffset = gridIndexOffset + (UINT)grid.Indices32.size();
     UINT cylinderIndexOffset = sphereIndexOffset + (UINT)sphere.Indices32.size();
 
     SubmeshGeometry boxSubmesh;
-    boxSubmesh.IndexCount         = (UINT)box.Indices32.size();
+    boxSubmesh.IndexCount = (UINT)box.Indices32.size();
     boxSubmesh.StartIndexLocation = boxIndexOffset;
     boxSubmesh.BaseVertexLocation = boxVertexOffset;
 
     SubmeshGeometry gridSubmesh;
-    gridSubmesh.IndexCount         = (UINT)grid.Indices32.size();
+    gridSubmesh.IndexCount = (UINT)grid.Indices32.size();
     gridSubmesh.StartIndexLocation = gridIndexOffset;
     gridSubmesh.BaseVertexLocation = gridVertexOffset;
 
     SubmeshGeometry sphereSubmesh;
-    sphereSubmesh.IndexCount         = (UINT)sphere.Indices32.size();
+    sphereSubmesh.IndexCount = (UINT)sphere.Indices32.size();
     sphereSubmesh.StartIndexLocation = sphereIndexOffset;
     sphereSubmesh.BaseVertexLocation = sphereVertexOffset;
 
     SubmeshGeometry cylinderSubmesh;
-    cylinderSubmesh.IndexCount         = (UINT)cylinder.Indices32.size();
+    cylinderSubmesh.IndexCount = (UINT)cylinder.Indices32.size();
     cylinderSubmesh.StartIndexLocation = cylinderIndexOffset;
     cylinderSubmesh.BaseVertexLocation = cylinderVertexOffset;
 
-    // Pack all vertices.
     auto totalVertexCount =
         box.Vertices.size() + grid.Vertices.size() +
         sphere.Vertices.size() + cylinder.Vertices.size();
 
     std::vector<Vertex> vertices(totalVertexCount);
     UINT k = 0;
+    for (size_t i = 0; i < box.Vertices.size(); ++i, ++k) { vertices[k].Pos = box.Vertices[i].Position;      vertices[k].Normal = box.Vertices[i].Normal;      vertices[k].TexC = box.Vertices[i].TexC;      vertices[k].TangentU = box.Vertices[i].TangentU; }
+    for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k) { vertices[k].Pos = grid.Vertices[i].Position;     vertices[k].Normal = grid.Vertices[i].Normal;     vertices[k].TexC = grid.Vertices[i].TexC;     vertices[k].TangentU = grid.Vertices[i].TangentU; }
+    for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k) { vertices[k].Pos = sphere.Vertices[i].Position;   vertices[k].Normal = sphere.Vertices[i].Normal;   vertices[k].TexC = sphere.Vertices[i].TexC;   vertices[k].TangentU = sphere.Vertices[i].TangentU; }
+    for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k) { vertices[k].Pos = cylinder.Vertices[i].Position; vertices[k].Normal = cylinder.Vertices[i].Normal; vertices[k].TexC = cylinder.Vertices[i].TexC; vertices[k].TangentU = cylinder.Vertices[i].TangentU; }
 
-    for (size_t i = 0; i < box.Vertices.size(); ++i, ++k)
-    {
-        vertices[k].Pos      = box.Vertices[i].Position;
-        vertices[k].Normal   = box.Vertices[i].Normal;
-        vertices[k].TexC     = box.Vertices[i].TexC;
-        vertices[k].TangentU = box.Vertices[i].TangentU;
-    }
-    for (size_t i = 0; i < grid.Vertices.size(); ++i, ++k)
-    {
-        vertices[k].Pos      = grid.Vertices[i].Position;
-        vertices[k].Normal   = grid.Vertices[i].Normal;
-        vertices[k].TexC     = grid.Vertices[i].TexC;
-        vertices[k].TangentU = grid.Vertices[i].TangentU;
-    }
-    for (size_t i = 0; i < sphere.Vertices.size(); ++i, ++k)
-    {
-        vertices[k].Pos      = sphere.Vertices[i].Position;
-        vertices[k].Normal   = sphere.Vertices[i].Normal;
-        vertices[k].TexC     = sphere.Vertices[i].TexC;
-        vertices[k].TangentU = sphere.Vertices[i].TangentU;
-    }
-    for (size_t i = 0; i < cylinder.Vertices.size(); ++i, ++k)
-    {
-        vertices[k].Pos      = cylinder.Vertices[i].Position;
-        vertices[k].Normal   = cylinder.Vertices[i].Normal;
-        vertices[k].TexC     = cylinder.Vertices[i].TexC;
-        vertices[k].TangentU = cylinder.Vertices[i].TangentU;
-    }
-
-    // Pack all indices.
     std::vector<std::uint16_t> indices;
-    indices.insert(indices.end(), std::begin(box.GetIndices16()),      std::end(box.GetIndices16()));
-    indices.insert(indices.end(), std::begin(grid.GetIndices16()),     std::end(grid.GetIndices16()));
-    indices.insert(indices.end(), std::begin(sphere.GetIndices16()),   std::end(sphere.GetIndices16()));
+    indices.insert(indices.end(), std::begin(box.GetIndices16()), std::end(box.GetIndices16()));
+    indices.insert(indices.end(), std::begin(grid.GetIndices16()), std::end(grid.GetIndices16()));
+    indices.insert(indices.end(), std::begin(sphere.GetIndices16()), std::end(sphere.GetIndices16()));
     indices.insert(indices.end(), std::begin(cylinder.GetIndices16()), std::end(cylinder.GetIndices16()));
 
     const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
-    const UINT ibByteSize = (UINT)indices.size()  * sizeof(std::uint16_t);
+    const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
 
-    auto geo  = std::make_unique<MeshGeometry>();
+    auto geo = std::make_unique<MeshGeometry>();
     geo->Name = "shapeGeo";
 
     ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
@@ -675,21 +784,17 @@ void Game::BuildShapeGeometry()
     ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
     CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
 
-    geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(
-        md3dDevice.Get(), mCommandList.Get(),
-        vertices.data(), vbByteSize, geo->VertexBufferUploader);
-    geo->IndexBufferGPU  = d3dUtil::CreateDefaultBuffer(
-        md3dDevice.Get(), mCommandList.Get(),
-        indices.data(),  ibByteSize, geo->IndexBufferUploader);
+    geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+    geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(), mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
 
-    geo->VertexByteStride     = sizeof(Vertex);
+    geo->VertexByteStride = sizeof(Vertex);
     geo->VertexBufferByteSize = vbByteSize;
-    geo->IndexFormat          = DXGI_FORMAT_R16_UINT;
-    geo->IndexBufferByteSize  = ibByteSize;
+    geo->IndexFormat = DXGI_FORMAT_R16_UINT;
+    geo->IndexBufferByteSize = ibByteSize;
 
-    geo->DrawArgs["box"]      = boxSubmesh;
-    geo->DrawArgs["grid"]     = gridSubmesh;
-    geo->DrawArgs["sphere"]   = sphereSubmesh;
+    geo->DrawArgs["box"] = boxSubmesh;
+    geo->DrawArgs["grid"] = gridSubmesh;
+    geo->DrawArgs["sphere"] = sphereSubmesh;
     geo->DrawArgs["cylinder"] = cylinderSubmesh;
 
     mGeometries[geo->Name] = std::move(geo);
@@ -697,62 +802,40 @@ void Game::BuildShapeGeometry()
 
 /**
  * @brief Creates opaque and sky pipeline state objects.
- *
- * Sky PSO disables back-face culling and uses LESS_EQUAL depth comparison
- * so the sky renders at maximum depth without being clipped.
  */
 void Game::BuildPSOs()
 {
     D3D12_GRAPHICS_PIPELINE_STATE_DESC opaquePsoDesc;
     ZeroMemory(&opaquePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
-    opaquePsoDesc.InputLayout    = { mInputLayout.data(), (UINT)mInputLayout.size() };
+    opaquePsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
     opaquePsoDesc.pRootSignature = mRootSignature.Get();
-    opaquePsoDesc.VS =
-    {
-        reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()),
-        mShaders["standardVS"]->GetBufferSize()
-    };
-    opaquePsoDesc.PS =
-    {
-        reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
-        mShaders["opaquePS"]->GetBufferSize()
-    };
-    opaquePsoDesc.RasterizerState       = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-    opaquePsoDesc.BlendState            = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-    opaquePsoDesc.DepthStencilState     = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    opaquePsoDesc.SampleMask            = UINT_MAX;
+    opaquePsoDesc.VS = { reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()), mShaders["standardVS"]->GetBufferSize() };
+    opaquePsoDesc.PS = { reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),   mShaders["opaquePS"]->GetBufferSize() };
+    opaquePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+    opaquePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    opaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    opaquePsoDesc.SampleMask = UINT_MAX;
     opaquePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    opaquePsoDesc.NumRenderTargets      = 1;
-    opaquePsoDesc.RTVFormats[0]         = mBackBufferFormat;
-    opaquePsoDesc.SampleDesc.Count      = m4xMsaaState ? 4 : 1;
-    opaquePsoDesc.SampleDesc.Quality    = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-    opaquePsoDesc.DSVFormat             = mDepthStencilFormat;
-    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(
-        &opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
+    opaquePsoDesc.NumRenderTargets = 1;
+    opaquePsoDesc.RTVFormats[0] = mBackBufferFormat;
+    opaquePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
+    opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+    opaquePsoDesc.DSVFormat = mDepthStencilFormat;
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
 
-    // Sky PSO — render inside-out, depth LESS_EQUAL.
     D3D12_GRAPHICS_PIPELINE_STATE_DESC skyPsoDesc = opaquePsoDesc;
-    skyPsoDesc.RasterizerState.CullMode          = D3D12_CULL_MODE_NONE;
-    skyPsoDesc.DepthStencilState.DepthFunc       = D3D12_COMPARISON_FUNC_LESS_EQUAL;
-    skyPsoDesc.VS =
-    {
-        reinterpret_cast<BYTE*>(mShaders["skyVS"]->GetBufferPointer()),
-        mShaders["skyVS"]->GetBufferSize()
-    };
-    skyPsoDesc.PS =
-    {
-        reinterpret_cast<BYTE*>(mShaders["skyPS"]->GetBufferPointer()),
-        mShaders["skyPS"]->GetBufferSize()
-    };
-    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(
-        &skyPsoDesc, IID_PPV_ARGS(&mPSOs["sky"])));
+    skyPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    skyPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    skyPsoDesc.VS = { reinterpret_cast<BYTE*>(mShaders["skyVS"]->GetBufferPointer()), mShaders["skyVS"]->GetBufferSize() };
+    skyPsoDesc.PS = { reinterpret_cast<BYTE*>(mShaders["skyPS"]->GetBufferPointer()), mShaders["skyPS"]->GetBufferSize() };
+    ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&skyPsoDesc, IID_PPV_ARGS(&mPSOs["sky"])));
 }
 
 /**
  * @brief Allocates one FrameResource per frame-in-flight.
  *
- * Frame count is gNumFrameResources (= 3). Each resource holds
- * a command allocator, object CB, pass CB, and material structured buffer.
+ * Called from GameState when the scene is built, since the object count
+ * is not known until render items are registered.
  */
 void Game::BuildFrameResources()
 {
@@ -760,99 +843,96 @@ void Game::BuildFrameResources()
     {
         mFrameResources.push_back(std::make_unique<FrameResource>(
             md3dDevice.Get(),
-            1,                          // pass count
-            (UINT)mAllRitems.size(),    // object count
-            (UINT)mMaterials.size()));  // material count
+            1,
+            (UINT)mAllRitems.size(),
+            (UINT)mMaterials.size()));
     }
+}
+
+/**
+ * @brief Flushes the GPU, clears old frame resources, and rebuilds them.
+ *
+ * Called by GameState after buildScene() adds render items so the
+ * per-object constant buffers are correctly sized for the full scene.
+ */
+void Game::RebuildFrameResources()
+{
+    FlushCommandQueue();
+    mFrameResources.clear();
+    mCurrFrameResourceIndex = 0;
+    for (int i = 0; i < gNumFrameResources; ++i)
+    {
+        mFrameResources.push_back(std::make_unique<FrameResource>(
+            md3dDevice.Get(),
+            1,
+            (UINT)mAllRitems.size(),
+            (UINT)mMaterials.size()));
+    }
+    mCurrFrameResource = mFrameResources[0].get();
 }
 
 /**
  * @brief Creates all materials used by the scene.
- *
- * Standard NormalMap materials: bricks0, tile0, mirror0, sky.
- * Aircraft materials: Eagle (blue), Raptor (red).
- * Indices must stay contiguous and match DiffuseSrvHeapIndex layout.
  */
 void Game::BuildMaterials()
 {
     auto addMaterial = [&](const std::string& name, int cbIdx,
-                           int diffIdx, int normIdx,
-                           XMFLOAT4 albedo, XMFLOAT3 fresnel, float rough)
-    {
-        auto mat = std::make_unique<Material>();
-        mat->Name                = name;
-        mat->MatCBIndex          = cbIdx;
-        mat->DiffuseSrvHeapIndex = diffIdx;
-        mat->NormalSrvHeapIndex  = normIdx;
-        mat->DiffuseAlbedo       = albedo;
-        mat->FresnelR0           = fresnel;
-        mat->Roughness           = rough;
-        mMaterials[name]         = std::move(mat);
-    };
+        int diffIdx, int normIdx,
+        XMFLOAT4 albedo, XMFLOAT3 fresnel, float rough)
+        {
+            auto mat = std::make_unique<Material>();
+            mat->Name = name;
+            mat->MatCBIndex = cbIdx;
+            mat->DiffuseSrvHeapIndex = diffIdx;
+            mat->NormalSrvHeapIndex = normIdx;
+            mat->DiffuseAlbedo = albedo;
+            mat->FresnelR0 = fresnel;
+            mat->Roughness = rough;
+            mMaterials[name] = std::move(mat);
+        };
 
-    // Standard scene materials.
-    addMaterial("bricks0", 0, 0, 1, {1,1,1,1},          {0.1f,0.1f,0.1f},    0.3f);
-    addMaterial("tile0",   1, 2, 3, {0.9f,0.9f,0.9f,1}, {0.2f,0.2f,0.2f},    0.1f);
-    addMaterial("mirror0", 2, 4, 5, {1,1,1,1},           {0.98f,0.97f,0.95f}, 1.0f);
-    addMaterial("sky",     3, 6, 7, {1,1,1,1},           {0.1f,0.1f,0.1f},    1.0f);
-
-    // Aircraft materials (reuse default diffuse/normal textures).
-    addMaterial("Eagle",  4, 4, 5, {0.3f,0.5f,0.9f,1}, {0.1f,0.1f,0.1f}, 0.3f);  // blue
-    addMaterial("Raptor", 5, 4, 5, {0.9f,0.2f,0.2f,1}, {0.1f,0.1f,0.1f}, 0.3f);  // red
+    addMaterial("bricks0", 0, 0, 1, { 1,1,1,1 }, { 0.1f,0.1f,0.1f }, 0.3f);
+    addMaterial("tile0", 1, 2, 3, { 0.9f,0.9f,0.9f,1 }, { 0.2f,0.2f,0.2f }, 0.1f);
+    addMaterial("mirror0", 2, 4, 5, { 0,0,0,1 }, { 0.98f,0.97f,0.95f }, 0.1f);
+    addMaterial("sky", 3, 6, 7, { 1,1,1,1 }, { 0.1f,0.1f,0.1f }, 1.0f);
+    addMaterial("Eagle", 4, 4, 5, { 0.3f,0.5f,0.9f,1 }, { 0.1f,0.1f,0.1f }, 0.3f);
+    addMaterial("Raptor", 5, 4, 5, { 0.9f,0.2f,0.2f,1 }, { 0.1f,0.1f,0.1f }, 0.3f);
 }
 
 /**
- * @brief Builds all render items.
- *
- * Creates the sky sphere render item, then calls mWorld.buildScene()
- * which in turn calls Aircraft::buildCurrent() to push aircraft render items.
- * Finally, populates the opaque and sky render-item lists.
+ * @brief Stub — render items are built by GameState via World::buildScene().
  */
 void Game::BuildRenderItems()
 {
-    // --- Sky sphere ---
+    // Sky sphere
     auto skyRitem = std::make_unique<RenderItem>();
     XMStoreFloat4x4(&skyRitem->World, XMMatrixScaling(5000.0f, 5000.0f, 5000.0f));
-    skyRitem->TexTransform       = MathHelper::Identity4x4();
-    skyRitem->ObjCBIndex         = 0;
-    skyRitem->Mat                = mMaterials["sky"].get();
-    skyRitem->Geo                = mGeometries["shapeGeo"].get();
-    skyRitem->PrimitiveType      = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-    skyRitem->IndexCount         = skyRitem->Geo->DrawArgs["sphere"].IndexCount;
+    skyRitem->TexTransform = MathHelper::Identity4x4();
+    skyRitem->ObjCBIndex = 0;
+    skyRitem->Mat = mMaterials["sky"].get();
+    skyRitem->Geo = mGeometries["shapeGeo"].get();
+    skyRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    skyRitem->IndexCount = skyRitem->Geo->DrawArgs["sphere"].IndexCount;
     skyRitem->StartIndexLocation = skyRitem->Geo->DrawArgs["sphere"].StartIndexLocation;
     skyRitem->BaseVertexLocation = skyRitem->Geo->DrawArgs["sphere"].BaseVertexLocation;
     mSkyRitems.push_back(skyRitem.get());
     mAllRitems.push_back(std::move(skyRitem));
-
-    // --- Aircraft (Eagle + Raptors) via scene graph ---
-    mWorld.buildScene();
-
-    // Partition render items into sky vs opaque lists.
-    for (auto& e : mAllRitems)
-    {
-        // Sky item is already in mSkyRitems; everything else is opaque.
-        if (e->Mat != mMaterials["sky"].get())
-            mOpaqueRitems.push_back(e.get());
-    }
 }
 
 /**
  * @brief Issues indexed draw calls for a list of render items.
- *
- * Binds vertex/index buffers, sets per-object CB address, and draws.
- *
  * @param cmdList  The command list to record into.
  * @param ritems   The render items to draw.
  */
 void Game::DrawRenderItems(ID3D12GraphicsCommandList* cmdList,
-                           const std::vector<RenderItem*>& ritems)
+    const std::vector<RenderItem*>& ritems)
 {
     UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
-    auto objectCB      = mCurrFrameResource->ObjectCB->Resource();
+    auto objectCB = mCurrFrameResource->ObjectCB->Resource();
 
     for (size_t i = 0; i < ritems.size(); ++i)
     {
-        auto ri  = ritems[i];
+        auto ri = ritems[i];
         auto vbv = ri->Geo->VertexBufferView();
         auto ibv = ri->Geo->IndexBufferView();
 
@@ -864,46 +944,21 @@ void Game::DrawRenderItems(ID3D12GraphicsCommandList* cmdList,
             objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
         cmdList->SetGraphicsRootConstantBufferView(0, objCBAddress);
 
-        cmdList->DrawIndexedInstanced(
-            ri->IndexCount, 1,
-            ri->StartIndexLocation,
-            ri->BaseVertexLocation, 0);
+        cmdList->DrawIndexedInstanced(ri->IndexCount, 1,
+            ri->StartIndexLocation, ri->BaseVertexLocation, 0);
     }
 }
 
 /**
  * @brief Returns the six standard static samplers used by the shaders.
- *
- * Covers point/linear/anisotropic in both wrap and clamp modes.
  */
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> Game::GetStaticSamplers()
 {
-    const CD3DX12_STATIC_SAMPLER_DESC pointWrap(
-        0, D3D12_FILTER_MIN_MAG_MIP_POINT,
-        D3D12_TEXTURE_ADDRESS_MODE_WRAP,  D3D12_TEXTURE_ADDRESS_MODE_WRAP,  D3D12_TEXTURE_ADDRESS_MODE_WRAP);
-
-    const CD3DX12_STATIC_SAMPLER_DESC pointClamp(
-        1, D3D12_FILTER_MIN_MAG_MIP_POINT,
-        D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
-
-    const CD3DX12_STATIC_SAMPLER_DESC linearWrap(
-        2, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
-        D3D12_TEXTURE_ADDRESS_MODE_WRAP,  D3D12_TEXTURE_ADDRESS_MODE_WRAP,  D3D12_TEXTURE_ADDRESS_MODE_WRAP);
-
-    const CD3DX12_STATIC_SAMPLER_DESC linearClamp(
-        3, D3D12_FILTER_MIN_MAG_MIP_LINEAR,
-        D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
-
-    const CD3DX12_STATIC_SAMPLER_DESC anisotropicWrap(
-        4, D3D12_FILTER_ANISOTROPIC,
-        D3D12_TEXTURE_ADDRESS_MODE_WRAP,  D3D12_TEXTURE_ADDRESS_MODE_WRAP,  D3D12_TEXTURE_ADDRESS_MODE_WRAP,
-        0.0f, 8);
-
-    const CD3DX12_STATIC_SAMPLER_DESC anisotropicClamp(
-        5, D3D12_FILTER_ANISOTROPIC,
-        D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-        0.0f, 8);
-
-    return { pointWrap, pointClamp, linearWrap, linearClamp,
-             anisotropicWrap, anisotropicClamp };
+    const CD3DX12_STATIC_SAMPLER_DESC pointWrap(0, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
+    const CD3DX12_STATIC_SAMPLER_DESC pointClamp(1, D3D12_FILTER_MIN_MAG_MIP_POINT, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+    const CD3DX12_STATIC_SAMPLER_DESC linearWrap(2, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP);
+    const CD3DX12_STATIC_SAMPLER_DESC linearClamp(3, D3D12_FILTER_MIN_MAG_MIP_LINEAR, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+    const CD3DX12_STATIC_SAMPLER_DESC anisotropicWrap(4, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, D3D12_TEXTURE_ADDRESS_MODE_WRAP, 0.0f, 8);
+    const CD3DX12_STATIC_SAMPLER_DESC anisotropicClamp(5, D3D12_FILTER_ANISOTROPIC, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, D3D12_TEXTURE_ADDRESS_MODE_CLAMP, 0.0f, 8);
+    return { pointWrap, pointClamp, linearWrap, linearClamp, anisotropicWrap, anisotropicClamp };
 }

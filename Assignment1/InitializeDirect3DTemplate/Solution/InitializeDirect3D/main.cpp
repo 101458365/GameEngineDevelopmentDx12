@@ -1,3 +1,12 @@
+/**
+ * @file main.cpp
+ * @brief Application entry point.
+ *
+ * Creates the Game instance and runs the message loop. Key-down events
+ * are forwarded to the StateStack via Game's MsgProc override so state
+ * transitions (Title → Menu → Game ↔ Pause) are event-driven.
+ */
+
 #include "Game.hpp"
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
